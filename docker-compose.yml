@@ -1,0 +1,101 @@
+# Local development stack for Bory & Norbert.
+#
+#   docker compose up -d postgres redis      # just the infra (run apps on host)
+#   docker compose up --build                # everything in containers
+#
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bn_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-bory_norbert}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bn} -d ${POSTGRES_DB:-bory_norbert}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  adminer:
+    image: adminer:4
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: dev
+    command: sh -c "pnpm --filter @bn/api prisma migrate deploy && pnpm --filter @bn/api start:dev"
+    environment:
+      NODE_ENV: development
+      API_PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bn}:${POSTGRES_PASSWORD:-bn_dev_password}@postgres:5432/${POSTGRES_DB:-bory_norbert}?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-access-secret-change-me}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret-change-me}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-mock}
+      CRYPTO_PROVIDER: ${CRYPTO_PROVIDER:-mock}
+      MOCK_PROVIDERS_ENABLED: ${MOCK_PROVIDERS_ENABLED:-true}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+    ports:
+      - "${API_PORT:-3001}:3001"
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./packages:/app/packages
+      - /app/node_modules
+      - /app/apps/api/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: dev
+    command: pnpm --filter @bn/web dev
+    environment:
+      NODE_ENV: development
+      WEB_PORT: 3000
+      NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-3001}/api/v1
+      NEXT_PUBLIC_MOCK_ENABLED: ${NEXT_PUBLIC_MOCK_ENABLED:-true}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      - ./apps/web:/app/apps/web
+      - ./packages:/app/packages
+      - /app/node_modules
+      - /app/apps/web/node_modules
+      - /app/apps/web/.next
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:

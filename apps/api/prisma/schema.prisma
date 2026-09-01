@@ -1,0 +1,490 @@
+// Bory & Norbert — data model for the foundation + BUY USDT flow.
+//
+// Money & rate columns are DECIMAL(38,18). Application code always goes through
+// @bn/money (decimal.js) and quantises to the asset scale before persisting, so
+// these columns never carry more precision than the asset supports.
+//
+// TransactionEvent, TreasuryLedgerEntry and AuditLog are append-only: the
+// service layer exposes no update/delete path for them.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  USER
+  ADMIN
+  TREASURY_OPS
+  COMPLIANCE
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_KYC
+}
+
+enum KycLevel {
+  NONE
+  BASIC
+  FULL
+}
+
+enum Asset {
+  GNF
+  USDT
+}
+
+enum TradingPair {
+  GNF_USDT
+}
+
+enum TransactionType {
+  BUY
+}
+
+enum QuoteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
+enum TransactionStatus {
+  CREATED
+  QUOTE_LOCKED
+  WAITING_PAYMENT
+  PAYMENT_DETECTED
+  PAYMENT_CONFIRMED
+  USDT_PROCESSING
+  USDT_SENT
+  COMPLETED
+  EXPIRED
+  FAILED
+  CANCELLED
+  MANUAL_REVIEW
+}
+
+enum ActorType {
+  SYSTEM
+  USER
+  ADMIN
+  PROVIDER
+}
+
+enum PaymentMethod {
+  ORANGE_MONEY
+}
+
+enum ReservationStatus {
+  HELD
+  RELEASED
+  CONSUMED
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum LedgerBucket {
+  AVAILABLE
+  RESERVED
+}
+
+enum ProviderType {
+  PAYMENT
+  CRYPTO
+}
+
+enum ProviderOperationStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum IdempotencyStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum LimitScope {
+  GLOBAL
+  ROLE
+  USER
+  KYC_LEVEL
+}
+
+enum AmlFlagStatus {
+  OPEN
+  CLEARED
+  CONFIRMED
+}
+
+// ---------------------------------------------------------------------------
+// Identity & access
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid())
+  phone        String     @unique
+  email        String?    @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         Role       @default(USER)
+  status       UserStatus @default(ACTIVE)
+  kycLevel     KycLevel   @default(NONE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  refreshTokens RefreshToken[]
+  quotes        Quote[]
+  transactions  Transaction[]
+  kycProfile    KycProfile?
+  amlFlags      AmlFlag[]
+
+  @@index([role])
+  @@index([status])
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdByIp  String?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model KycProfile {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  level           KycLevel  @default(NONE)
+  provider        String?
+  providerRef     String?
+  idType          String?
+  idNumber        String?
+  dateOfBirth     DateTime?
+  address         String?
+  verifiedAt      DateTime?
+  rejectionReason String?
+  rawPayload      Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Compliance scaffold (structure only in this iteration)
+// ---------------------------------------------------------------------------
+
+model TransactionLimit {
+  id         String      @id @default(uuid())
+  scope      LimitScope
+  refId      String?
+  currency   Asset
+  perTxMin   Decimal     @db.Decimal(38, 18)
+  perTxMax   Decimal     @db.Decimal(38, 18)
+  dailyMax   Decimal     @db.Decimal(38, 18)
+  monthlyMax Decimal     @db.Decimal(38, 18)
+  active     Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([scope, refId, currency])
+}
+
+model AmlFlag {
+  id            String        @id @default(uuid())
+  userId        String?
+  user          User?         @relation(fields: [userId], references: [id])
+  transactionId String?
+  transaction   Transaction?  @relation(fields: [transactionId], references: [id])
+  type          String
+  severity      String
+  status        AmlFlagStatus @default(OPEN)
+  details       Json?
+  raisedBy      String?
+  resolvedBy    String?
+  resolvedAt    DateTime?
+  createdAt     DateTime      @default(now())
+
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Pricing
+// ---------------------------------------------------------------------------
+
+model PricingConfig {
+  id              String      @id @default(uuid())
+  pair            TradingPair @default(GNF_USDT)
+  marketRate      Decimal     @db.Decimal(38, 18)
+  buySpreadBps    Int
+  sellSpreadBps   Int         @default(0)
+  feeGnfFlat      Decimal     @default(0) @db.Decimal(38, 18)
+  minGnfAmount    Decimal     @db.Decimal(38, 18)
+  maxGnfAmount    Decimal     @db.Decimal(38, 18)
+  quoteTtlSeconds Int         @default(90)
+  version         Int
+  active          Boolean     @default(false)
+  createdBy       String?
+  createdAt       DateTime    @default(now())
+
+  @@unique([pair, version])
+  @@index([pair, active])
+}
+
+// ---------------------------------------------------------------------------
+// Quotes
+// ---------------------------------------------------------------------------
+
+model Quote {
+  id                   String          @id @default(uuid())
+  publicId             String          @unique
+  userId               String
+  user                 User            @relation(fields: [userId], references: [id])
+  pair                 TradingPair     @default(GNF_USDT)
+  side                 TransactionType @default(BUY)
+  status               QuoteStatus     @default(PENDING)
+  marketRate           Decimal         @db.Decimal(38, 18)
+  bnRate               Decimal         @db.Decimal(38, 18)
+  spreadBps            Int
+  feeGnf               Decimal         @db.Decimal(38, 18)
+  gnfAmount            Decimal         @db.Decimal(38, 18)
+  usdtAmount           Decimal         @db.Decimal(38, 18)
+  pricingConfigVersion Int
+  expiresAt            DateTime
+  acceptedAt           DateTime?
+  transactionId        String?         @unique
+  transaction          Transaction?    @relation(fields: [transactionId], references: [id])
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  @@index([userId])
+  @@index([status, expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Transactions
+// ---------------------------------------------------------------------------
+
+model Transaction {
+  id                  String            @id @default(uuid())
+  publicId            String            @unique
+  userId              String
+  user                User              @relation(fields: [userId], references: [id])
+  type                TransactionType   @default(BUY)
+  status              TransactionStatus @default(CREATED)
+  pair                TradingPair       @default(GNF_USDT)
+
+  marketRate Decimal @db.Decimal(38, 18)
+  bnRate     Decimal @db.Decimal(38, 18)
+  feeGnf     Decimal @db.Decimal(38, 18)
+  gnfAmount  Decimal @db.Decimal(38, 18)
+  usdtAmount Decimal @db.Decimal(38, 18)
+
+  destinationAddress String
+
+  paymentProviderKey String
+  paymentProviderRef String?
+  paymentMethod      PaymentMethod @default(ORANGE_MONEY)
+  payerPhone         String?
+  paymentExpiresAt   DateTime?
+
+  cryptoProviderKey  String
+  cryptoTxHash       String?
+  cryptoConfirmations Int    @default(0)
+
+  failureReason      String?
+  manualReviewReason String?
+  idempotencyKey     String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  quote        Quote?
+  events       TransactionEvent[]
+  reservations LiquidityReservation[]
+  providerOps  ProviderOperation[]
+  mockEvents   MockEvent[]
+  amlFlags     AmlFlag[]
+
+  @@index([status])
+  @@index([userId, createdAt])
+  @@index([paymentExpiresAt])
+}
+
+/// Append-only. One row per accepted state transition.
+model TransactionEvent {
+  id             String             @id @default(uuid())
+  transactionId  String
+  transaction    Transaction        @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  previousStatus TransactionStatus?
+  nextStatus     TransactionStatus
+  event          String
+  actorType      ActorType          @default(SYSTEM)
+  actorId        String?
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime           @default(now())
+
+  // Makes deterministic transitions idempotent: the same logical event can only
+  // be recorded once per transaction.
+  @@unique([transactionId, event, nextStatus])
+  @@index([transactionId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Treasury
+// ---------------------------------------------------------------------------
+
+model TreasuryAccount {
+  id        String   @id @default(uuid())
+  asset     Asset    @unique
+  available Decimal  @default(0) @db.Decimal(38, 18)
+  reserved  Decimal  @default(0) @db.Decimal(38, 18)
+  version   Int      @default(0)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  reservations  LiquidityReservation[]
+  ledgerEntries TreasuryLedgerEntry[]
+}
+
+model LiquidityReservation {
+  id                String            @id @default(uuid())
+  treasuryAccountId String
+  treasuryAccount   TreasuryAccount   @relation(fields: [treasuryAccountId], references: [id])
+  asset             Asset
+  amount            Decimal           @db.Decimal(38, 18)
+  status            ReservationStatus @default(HELD)
+  quoteId           String?
+  transactionId     String?
+  transaction       Transaction?      @relation(fields: [transactionId], references: [id])
+  reason            String
+  expiresAt         DateTime?
+  releasedAt        DateTime?
+  consumedAt        DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([status])
+  @@index([transactionId])
+}
+
+/// Append-only. Every movement of AVAILABLE or RESERVED funds.
+model TreasuryLedgerEntry {
+  id                     String          @id @default(uuid())
+  treasuryAccountId      String
+  treasuryAccount        TreasuryAccount @relation(fields: [treasuryAccountId], references: [id])
+  asset                  Asset
+  direction              LedgerDirection
+  bucket                 LedgerBucket
+  amount                 Decimal         @db.Decimal(38, 18)
+  balanceAfterAvailable  Decimal         @db.Decimal(38, 18)
+  balanceAfterReserved   Decimal         @db.Decimal(38, 18)
+  refType                String
+  refId                  String?
+  memo                   String?
+  createdAt              DateTime        @default(now())
+
+  @@index([asset, createdAt])
+  @@index([refType, refId])
+}
+
+// ---------------------------------------------------------------------------
+// Provider & idempotency plumbing
+// ---------------------------------------------------------------------------
+
+model ProviderOperation {
+  id             String                  @id @default(uuid())
+  providerType   ProviderType
+  providerKey    String
+  operation      String
+  transactionId  String?
+  transaction    Transaction?            @relation(fields: [transactionId], references: [id])
+  idempotencyKey String                  @unique
+  request        Json?
+  response       Json?
+  status         ProviderOperationStatus @default(PENDING)
+  externalRef    String?
+  error          String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  @@index([transactionId])
+  @@index([providerType, providerKey])
+}
+
+model IdempotencyKey {
+  id             String            @id @default(uuid())
+  key            String            @unique
+  userId         String?
+  method         String
+  path           String
+  requestHash    String
+  status         IdempotencyStatus @default(IN_PROGRESS)
+  responseStatus Int?
+  responseBody   Json?
+  lockedAt       DateTime          @default(now())
+  expiresAt      DateTime
+  createdAt      DateTime          @default(now())
+
+  @@index([expiresAt])
+}
+
+/// Dev-only. Records a simulated provider callback pushed via /mock/*.
+model MockEvent {
+  id            String       @id @default(uuid())
+  providerType  ProviderType
+  providerKey   String
+  transactionId String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  scenario      String
+  payload       Json?
+  processedAt   DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@index([transactionId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+/// Append-only. Written inside the same DB transaction as the change it records.
+model AuditLog {
+  id         String    @id @default(uuid())
+  actorType  ActorType @default(SYSTEM)
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  ip         String?
+  userAgent  String?
+  requestId  String?
+  createdAt  DateTime  @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}
