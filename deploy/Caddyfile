@@ -1,0 +1,20 @@
+# Single public domain. Caddy terminates TLS (Let's Encrypt, HTTP-01) and routes
+# /api/* to the NestJS API, everything else to the Next.js app.
+
+rndcoin.koppoddo.cloud {
+	encode zstd gzip
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+# Add this block once a DNS record for www.rndcoin.koppoddo.cloud points here:
+# www.rndcoin.koppoddo.cloud {
+# 	redir https://rndcoin.koppoddo.cloud{uri}
+# }

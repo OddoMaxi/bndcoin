@@ -6,22 +6,23 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 WORKDIR /app
 
-FROM base AS deps
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* tsconfig.base.json ./
-COPY packages/shared-types/package.json packages/shared-types/
-COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile || pnpm install
-
-FROM deps AS dev
+# ---- build ----
+FROM base AS build
+# NEXT_PUBLIC_* are inlined by Next at build time, so they must be present here.
+ARG NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1
+ARG NEXT_PUBLIC_MOCK_ENABLED=true
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_MOCK_ENABLED=$NEXT_PUBLIC_MOCK_ENABLED
 COPY . .
-RUN pnpm --filter @bn/shared-types build
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @bn/shared-types build && pnpm --filter @bn/web build
+
+# ---- dev: source is bind-mounted by docker-compose ----
+FROM build AS dev
 EXPOSE 3000
 CMD ["pnpm", "--filter", "@bn/web", "dev"]
 
-FROM deps AS build
-COPY . .
-RUN pnpm --filter @bn/shared-types build && pnpm --filter @bn/web build
-
+# ---- prod ----
 FROM base AS prod
 ENV NODE_ENV=production
 COPY --from=build /app /app

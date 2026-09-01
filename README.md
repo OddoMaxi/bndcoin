@@ -246,6 +246,26 @@ liquidity → `409`, crypto `FAILED → MANUAL_REVIEW` → admin retry → `COMP
 expired-quote accept → `410`, idempotency-key replay, and a concurrency test
 proving two simultaneous accepts cannot oversell the USDT float.
 
+## Deploy (single VPS, Docker)
+
+`deploy/` contains a production stack: Postgres, Redis, the API, the web app, and
+a **Caddy** reverse proxy that terminates TLS (Let's Encrypt) and routes
+`/api/*` → API, everything else → web, all on one domain.
+
+```bash
+# on the server, with Docker + Compose installed and DNS pointing at it
+git clone https://github.com/OddoMaxi/bndcoin.git /opt/bndcoin
+cd /opt/bndcoin/deploy
+cp .env.prod.example .env         # set PUBLIC_URL, POSTGRES_PASSWORD, JWT secrets
+#   edit ../deploy/Caddyfile if the domain differs
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec api pnpm --filter @bn/api db:seed
+```
+
+`NEXT_PUBLIC_API_URL` is baked into the web image at build time from
+`PUBLIC_URL`; change it → `up -d --build web`. `MOCK_PROVIDERS_ENABLED=true` is
+kept on so the BUY flow is demoable (only mock providers exist in this iteration).
+
 ## Security roadmap
 
 **Implemented now** — RBAC guard + role enum, JWT access + rotating refresh
