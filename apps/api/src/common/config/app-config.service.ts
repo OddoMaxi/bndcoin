@@ -23,6 +23,9 @@ export class AppConfigService {
   get apiPort() {
     return this.get('API_PORT');
   }
+  get appUrl() {
+    return this.get('APP_URL');
+  }
   get databaseUrl() {
     return this.get('DATABASE_URL');
   }
@@ -31,6 +34,9 @@ export class AppConfigService {
   }
   get corsOrigin() {
     return this.get('CORS_ORIGIN');
+  }
+  get qrSigningSecret() {
+    return this.get('QR_SIGNING_SECRET');
   }
 
   get jwt() {
@@ -42,11 +48,30 @@ export class AppConfigService {
     };
   }
 
-  get providers() {
+  get realMoneyMode() {
+    return this.get('REAL_MONEY_MODE');
+  }
+  get realCryptoMode() {
+    return this.get('REAL_CRYPTO_MODE');
+  }
+  get orangeMode() {
+    return this.get('ORANGE_MODE');
+  }
+  get otpMode() {
+    return this.get('OTP_MODE');
+  }
+  get blockchainProvider() {
+    return this.get('BLOCKCHAIN_PROVIDER');
+  }
+  get mockEnabled() {
+    return this.get('MOCK_PROVIDERS_ENABLED');
+  }
+
+  get pricing() {
     return {
-      payment: this.get('PAYMENT_PROVIDER'),
-      crypto: this.get('CRYPTO_PROVIDER'),
-      mockEnabled: this.get('MOCK_PROVIDERS_ENABLED'),
+      quoteTtl: this.get('DEFAULT_QUOTE_TTL'),
+      buySpreadBps: this.get('DEFAULT_BUY_SPREAD_BPS'),
+      sellSpreadBps: this.get('DEFAULT_SELL_SPREAD_BPS'),
     };
   }
 
@@ -59,9 +84,6 @@ export class AppConfigService {
   }
 
   get rateLimit() {
-    return {
-      ttl: this.get('RATE_LIMIT_TTL'),
-      limit: this.get('RATE_LIMIT_LIMIT'),
-    };
+    return { ttl: this.get('RATE_LIMIT_TTL'), limit: this.get('RATE_LIMIT_LIMIT') };
   }
 }

@@ -1,7 +1,9 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { Role } from '@prisma/client';
 import { ForbiddenError } from '../errors/domain-errors';
-import { AuthUser, IS_PUBLIC_KEY, ROLES_KEY } from './rbac.constants';
+import { AuthUser, IS_PUBLIC_KEY, PERMS_KEY, ROLES_KEY } from './rbac.constants';
+import { Permission, roleHasPermission } from './permissions';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -14,17 +16,29 @@ export class RolesGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const required = this.reflector.getAllAndOverride<AuthUser['role'][]>(ROLES_KEY, [
+    const req = context.switchToHttp().getRequest<{ user?: AuthUser }>();
+    const user = req.user;
+
+    const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (!required || required.length === 0) return true;
-
-    const req = context.switchToHttp().getRequest<{ user?: AuthUser }>();
-    const user = req.user;
-    if (!user || !required.includes(user.role)) {
-      throw new ForbiddenError('Insufficient role for this operation');
+    if (requiredRoles?.length) {
+      if (!user || (user.role !== 'SUPER_ADMIN' && !requiredRoles.includes(user.role))) {
+        throw new ForbiddenError('Insufficient role for this operation');
+      }
     }
+
+    const requiredPerms = this.reflector.getAllAndOverride<Permission[]>(PERMS_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (requiredPerms?.length) {
+      if (!user || !requiredPerms.every((p) => roleHasPermission(user.role, p))) {
+        throw new ForbiddenError(`Missing permission: ${requiredPerms.join(', ')}`);
+      }
+    }
+
     return true;
   }
 }
