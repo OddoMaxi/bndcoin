@@ -1,68 +1,23 @@
 'use client';
-
-import { useCallback, useEffect, useState } from 'react';
-import type { Paginated, UserDto } from '@bn/shared-types';
-import { api } from '@/lib/api-client';
-import { formatDateTime } from '@/lib/format';
-
-const ROLES = ['USER', 'ADMIN', 'TREASURY_OPS', 'COMPLIANCE'];
-const STATUSES = ['ACTIVE', 'SUSPENDED', 'PENDING_KYC'];
-
-export default function AdminUsers() {
-  const [users, setUsers] = useState<UserDto[]>([]);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    const res = await api.get<Paginated<UserDto>>('/admin/users?pageSize=50');
-    setUsers(res.items);
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function update(id: string, patch: Partial<Pick<UserDto, 'role' | 'status'>>) {
-    setMsg(null);
-    try {
-      await api.patch(`/admin/users/${id}`, patch);
-      await load();
-    } catch (err) {
-      setMsg((err as Error).message);
-    }
-  }
-
+import { AdminTable, adminAction } from '@/components/AdminTable';
+import { human } from '@/lib/format';
+const ROLES = ['CUSTOMER', 'OPERATIONS', 'TREASURY', 'COMPLIANCE', 'FINANCE', 'EVENT_MANAGER', 'SCANNER_OPERATOR', 'ORGANIZER', 'AUDITOR', 'SUPER_ADMIN'];
+export default function P() {
   return (
-    <div className="space-y-3">
-      {msg && <p className="text-sm text-red-600">{msg}</p>}
-      {users.map((u) => (
-        <div key={u.id} className="card">
-          <div className="flex items-center justify-between">
-            <span className="font-medium">
-              {u.firstName} {u.lastName}
-            </span>
-            <span className="text-xs text-muted">{u.phone}</span>
-          </div>
-          <p className="mt-0.5 text-xs text-muted">
-            KYC {u.kycLevel} · inscrit {formatDateTime(u.createdAt)}
-          </p>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <select className="field" value={u.role} onChange={(e) => update(u.id, { role: e.target.value as UserDto['role'] })}>
-              {ROLES.map((r) => (
-                <option key={r}>{r}</option>
-              ))}
-            </select>
-            <select
-              className="field"
-              value={u.status}
-              onChange={(e) => update(u.id, { status: e.target.value as UserDto['status'] })}
-            >
-              {STATUSES.map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      ))}
-    </div>
+    <AdminTable title="Utilisateurs" url="/admin/users?pageSize=50"
+      columns={[
+        { key: 'publicUserId', label: 'ID', render: (r) => <span className="font-mono text-xs">{r.publicUserId}</span> },
+        { key: 'name', label: 'Nom', render: (r) => `${r.firstName} ${r.lastName}` },
+        { key: 'phone', label: 'Téléphone' },
+        { key: 'role', label: 'Rôle', render: (r) => human(r.role) },
+        { key: 'kycStatus', label: 'KYC', render: (r) => human(r.kycStatus) },
+        { key: 'status', label: 'Statut', render: (r) => human(r.status) },
+      ]}
+      actions={(r, reload) => (
+        <select className="field !w-auto !py-1 text-xs" defaultValue={r.role} onChange={async (e) => { const err = await adminAction(`/admin/users/${r.id}`, { role: e.target.value }); if (err) alert(err); reload(); }}>
+          {ROLES.map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+      )}
+    />
   );
 }

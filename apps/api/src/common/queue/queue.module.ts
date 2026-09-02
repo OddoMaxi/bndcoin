@@ -25,7 +25,14 @@ import { QUEUE } from './queue.constants';
         };
       },
     }),
-    BullModule.registerQueue({ name: QUEUE.BUY_FLOW }, { name: QUEUE.QUOTES }),
+    BullModule.registerQueue(
+      { name: QUEUE.CRYPTO },
+      { name: QUEUE.PAYMENTS },
+      { name: QUEUE.ORANGE },
+      { name: QUEUE.BLOCKCHAIN },
+      { name: QUEUE.EVENTS },
+      { name: QUEUE.MAINTENANCE },
+    ),
   ],
   exports: [BullModule],
 })

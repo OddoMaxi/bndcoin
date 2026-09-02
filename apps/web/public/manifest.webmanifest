@@ -1,0 +1,9 @@
+{
+  "name": "Bory & Norbert",
+  "short_name": "B&N",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FBF9F4",
+  "theme_color": "#1B4332",
+  "icons": []
+}

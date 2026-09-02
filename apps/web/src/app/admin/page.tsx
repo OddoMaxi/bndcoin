@@ -2,76 +2,111 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api-client';
-import { formatGNF, formatUSDT, humanStatus } from '@/lib/format';
+import { fmtGNF, fmtUSDT, human } from '@/lib/format';
 
-interface Dashboard {
-  transactionsByStatus: Record<string, number>;
-  transactionsToday: number;
-  manualReviewOpen: number;
-  users: number;
-  treasury: {
-    balances: { asset: 'GNF' | 'USDT'; available: string; reserved: string; total: string }[];
-  };
-}
-
-export default function AdminHome() {
-  const [data, setData] = useState<Dashboard | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
+export default function AdminDashboard() {
+  const [d, setD] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    api
-      .get<Dashboard>('/admin/dashboard')
-      .then(setData)
-      .catch((e) => setError(e.message));
+    api.get('/admin/dashboard').then(setD).catch((e) => setErr(e.message));
+    const t = setInterval(() => api.get('/admin/dashboard').then(setD).catch(() => {}), 8000);
+    return () => clearInterval(t);
   }, []);
 
-  if (error) return <p className="text-sm text-red-600">{error}</p>;
-  if (!data) return <p className="text-muted">Chargement…</p>;
+  if (err) return <p className="text-sm text-red-600">{err}</p>;
+  if (!d) return <p className="text-muted">Chargement…</p>;
 
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
-        <Stat label="Transactions aujourd’hui" value={data.transactionsToday} />
-        <Stat label="En revue" value={data.manualReviewOpen} />
-        <Stat label="Utilisateurs" value={data.users} />
-      </div>
-
-      <div className="card">
-        <h2 className="mb-2 font-semibold">Trésorerie</h2>
-        {data.treasury.balances.map((b) => (
-          <div key={b.asset} className="flex justify-between py-1 text-sm">
-            <span className="font-medium">{b.asset}</span>
-            <span>
-              {b.asset === 'GNF' ? formatGNF(b.available) : formatUSDT(b.available)}{' '}
-              <span className="text-muted">
-                (réservé {b.asset === 'GNF' ? formatGNF(b.reserved) : formatUSDT(b.reserved)})
-              </span>
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div className="card">
-        <h2 className="mb-2 font-semibold">Transactions par statut</h2>
-        {Object.entries(data.transactionsByStatus).length === 0 && (
-          <p className="text-sm text-muted">Aucune.</p>
-        )}
-        {Object.entries(data.transactionsByStatus).map(([status, count]) => (
-          <div key={status} className="flex justify-between py-1 text-sm">
-            <span>{humanStatus(status)}</span>
-            <span className="font-semibold">{count}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="card px-3 py-4 text-center">
+  const stat = (label: string, value: React.ReactNode, sub?: string) => (
+    <div className="rounded-xl border border-black/5 bg-surface p-4">
       <p className="text-2xl font-bold text-forest">{value}</p>
       <p className="mt-1 text-xs text-muted">{label}</p>
+      {sub && <p className="text-[11px] text-muted">{sub}</p>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <h1 className="text-lg font-bold">Tableau de bord</h1>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {stat('Utilisateurs', d.users.total, `${d.users.kycPending} KYC en attente`)}
+        {stat('Volume crypto 24h', fmtGNF(d.crypto.today.volumeGnf), `${d.crypto.today.count} ordres`)}
+        {stat('Revenu plateforme', fmtGNF(d.finance.platformRevenueGnf))}
+        {stat('Alertes ouvertes', d.alerts.open)}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-xl border border-black/5 bg-surface p-4">
+          <h2 className="mb-2 text-sm font-semibold">Trésorerie</h2>
+          <div className="space-y-1 text-sm">
+            <div className="flex justify-between">
+              <span>GNF disponible</span>
+              <span className="font-medium">{fmtGNF(d.treasury.gnf.available)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>USDT disponible</span>
+              <span className="font-medium">{fmtUSDT(d.treasury.usdt.available)}</span>
+            </div>
+            <div className="flex justify-between text-muted">
+              <span>USDT réservé</span>
+              <span>{fmtUSDT(d.treasury.usdt.reserved)}</span>
+            </div>
+            <div className="mt-2 border-t border-black/5 pt-2">
+              <div className="flex justify-between">
+                <span>Coût moyen USDT (WAC)</span>
+                <span>{fmtGNF(d.treasury.inventory.weightedAverageCostGnf)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Marge réalisée</span>
+                <span>{fmtGNF(d.treasury.inventory.realizedMarginGnf)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-black/5 bg-surface p-4">
+          <h2 className="mb-2 text-sm font-semibold">Opérations</h2>
+          <div className="space-y-1 text-sm">
+            <div className="flex justify-between">
+              <span>Paiements en attente</span>
+              <span>{d.operations.pendingPayments}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Versements en attente</span>
+              <span>{d.operations.pendingPayouts}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Transactions en échec / revue</span>
+              <span>{d.operations.failedTransactions}</span>
+            </div>
+            <div className="mt-2 border-t border-black/5 pt-2">
+              <div className="flex justify-between">
+                <span>Grand livre équilibré</span>
+                <span className={d.finance.ledgerBalanced ? 'font-semibold text-forest' : 'font-semibold text-red-600'}>
+                  {d.finance.ledgerBalanced ? 'Oui' : 'NON'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-black/5 bg-surface p-4">
+        <h2 className="mb-2 text-sm font-semibold">Ordres crypto par statut</h2>
+        <div className="flex flex-wrap gap-2 text-sm">
+          {Object.entries(d.crypto.byStatus).map(([k, v]) => (
+            <span key={k} className="rounded-lg bg-black/[0.04] px-2 py-1">
+              {human(k)}: <b>{v as number}</b>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        {stat('Événements actifs', d.events.active)}
+        {stat('Billets vendus', d.events.ticketsSold)}
+        {stat('Check-ins', d.events.checkins)}
+      </div>
     </div>
   );
 }

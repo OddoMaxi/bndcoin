@@ -2,69 +2,91 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import type { PricingDto } from '@bn/shared-types';
 import { api } from '@/lib/api-client';
-import { formatRate } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
+import { fmtDay, fmtRate } from '@/lib/format';
+import { Card } from '@/components/ui';
 
-export default function HomePage() {
+interface Rates {
+  buyRate: string;
+  sellRate: string;
+  referenceRate: string;
+  minGnfAmount: string;
+  maxGnfAmount: string;
+}
+interface EventCard {
+  slug: string;
+  title: string;
+  city: string;
+  venue: string;
+  eventDate: string;
+  coverImage: string | null;
+  fromPriceGnf: string | null;
+}
+
+export default function Home() {
   const { user } = useAuth();
-  const [pricing, setPricing] = useState<PricingDto | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [rates, setRates] = useState<Rates | null>(null);
+  const [events, setEvents] = useState<EventCard[]>([]);
 
   useEffect(() => {
-    api
-      .get<PricingDto>('/pricing/current', { auth: false })
-      .then(setPricing)
-      .catch((e) => setError(e.message));
+    api.get<Rates>('/pricing/rates', { auth: false }).then(setRates).catch(() => {});
+    api.get<EventCard[]>('/events?featured=true', { auth: false }).then(setEvents).catch(() => {});
   }, []);
 
   return (
     <div className="space-y-6">
       <section className="card bg-forest text-white">
-        <p className="text-sm/relaxed text-white/70">Achetez de l’USDT en quelques secondes</p>
-        <h1 className="mt-1 text-2xl font-bold">Des francs guinéens vers l’USDT, simplement.</h1>
-        <p className="mt-3 text-sm text-white/80">
-          Pas de carnet d’ordres, pas de graphiques. Vous saisissez un montant, vous payez par
-          mobile money, vous recevez vos USDT.
-        </p>
-        <Link href={user ? '/buy' : '/register'} className="btn-gold mt-5 w-full">
-          {user ? 'Acheter de l’USDT' : 'Créer un compte'}
-        </Link>
+        <p className="text-sm text-white/70">Bienvenue{user ? `, ${user.firstName}` : ''}</p>
+        <h1 className="mt-1 text-xl font-bold">Achetez de l’USDT. Vendez de l’USDT. En quelques secondes.</h1>
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <Link href={user ? '/crypto/buy' : '/login'} className="btn-gold">
+            Acheter USDT
+          </Link>
+          <Link href={user ? '/crypto/sell' : '/login'} className="btn bg-white/10 text-white hover:bg-white/20">
+            Vendre USDT
+          </Link>
+        </div>
       </section>
 
-      <section className="card">
-        <p className="label">Taux d’achat actuel</p>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        {pricing ? (
-          <>
-            <p className="text-2xl font-bold text-forest">{formatRate(pricing.buyRate)}</p>
-            <p className="mt-1 text-xs text-muted">
-              Marché {formatRate(pricing.marketRate)} · marge {(pricing.buySpreadBps / 100).toFixed(2)}%
-            </p>
-            <p className="mt-1 text-xs text-muted">
-              Montant min {Number(pricing.minGnfAmount).toLocaleString('fr-GN')} GNF · max{' '}
-              {Number(pricing.maxGnfAmount).toLocaleString('fr-GN')} GNF
-            </p>
-          </>
-        ) : (
-          !error && <p className="text-muted">Chargement…</p>
-        )}
+      <section className="grid grid-cols-2 gap-3">
+        <Card>
+          <p className="label">Taux d’achat</p>
+          <p className="text-lg font-bold text-forest">{rates ? fmtRate(rates.buyRate) : '…'}</p>
+        </Card>
+        <Card>
+          <p className="label">Taux de vente</p>
+          <p className="text-lg font-bold text-forest">{rates ? fmtRate(rates.sellRate) : '…'}</p>
+        </Card>
       </section>
 
-      <section className="grid grid-cols-3 gap-3 text-center">
-        {[
-          ['1', 'Saisir un montant en GNF'],
-          ['2', 'Payer par Orange Money'],
-          ['3', 'Recevoir vos USDT'],
-        ].map(([n, label]) => (
-          <div key={n} className="card px-3 py-4">
-            <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-forest-tint font-bold text-forest">
-              {n}
-            </div>
-            <p className="mt-2 text-xs text-muted">{label}</p>
-          </div>
-        ))}
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="font-semibold">Événements à la une</h2>
+          <Link href="/events" className="text-sm font-medium text-forest">
+            Tout voir
+          </Link>
+        </div>
+        <div className="space-y-3">
+          {events.length === 0 && <Card className="text-center text-muted">Aucun événement pour le moment.</Card>}
+          {events.map((e) => (
+            <Link key={e.slug} href={`/events/${e.slug}`} className="card block overflow-hidden p-0">
+              {e.coverImage && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={e.coverImage} alt="" className="h-32 w-full object-cover" />
+              )}
+              <div className="p-4">
+                <p className="font-semibold">{e.title}</p>
+                <p className="text-xs text-muted">
+                  {e.venue}, {e.city} · {fmtDay(e.eventDate)}
+                </p>
+                {e.fromPriceGnf && (
+                  <p className="mt-1 text-sm font-medium text-forest">Dès {Number(e.fromPriceGnf).toLocaleString('fr-GN')} GNF</p>
+                )}
+              </div>
+            </Link>
+          ))}
+        </div>
       </section>
     </div>
   );

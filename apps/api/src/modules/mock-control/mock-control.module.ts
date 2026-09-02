@@ -1,12 +1,11 @@
 import { Module } from '@nestjs/common';
-import { TransactionsModule } from '../transactions/transactions.module';
-import { MockControlController } from './mock-control.controller';
-import { MockControlService } from './mock-control.service';
-import { MockEnabledGuard } from './mock.guard';
+import { CryptoModule } from '../crypto/crypto.module';
+import { TicketsModule } from '../tickets/tickets.module';
+import { MockControlController, MockEnabledGuard } from './mock-control.controller';
 
 @Module({
-  imports: [TransactionsModule],
+  imports: [CryptoModule, TicketsModule],
   controllers: [MockControlController],
-  providers: [MockControlService, MockEnabledGuard],
+  providers: [MockEnabledGuard],
 })
 export class MockControlModule {}

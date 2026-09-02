@@ -3,7 +3,7 @@
 #   cd deploy
 #   cp .env.prod.example .env   # then edit secrets
 #   docker compose -f docker-compose.prod.yml up -d --build
-#   docker compose -f docker-compose.prod.yml exec api pnpm --filter @bn/api db:seed
+#   docker compose -f docker-compose.prod.yml exec api sh -c "cd apps/api && pnpm exec prisma db seed"
 #
 # Caddy publishes 80/443 and obtains TLS automatically for the domain in ./Caddyfile.
 
@@ -48,17 +48,29 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: "3001"
+      APP_URL: ${PUBLIC_URL}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       REDIS_URL: redis://redis:6379
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       JWT_ACCESS_TTL: "900"
       JWT_REFRESH_TTL: "604800"
-      PAYMENT_PROVIDER: mock
-      CRYPTO_PROVIDER: mock
+      QR_SIGNING_SECRET: ${QR_SIGNING_SECRET}
+      # Master safety switches — all mock until real credentials / hardware.
+      REAL_MONEY_MODE: ${REAL_MONEY_MODE:-false}
+      REAL_CRYPTO_MODE: ${REAL_CRYPTO_MODE:-false}
+      ORANGE_MODE: ${ORANGE_MODE:-mock}
+      OTP_MODE: ${OTP_MODE:-mock}
+      BLOCKCHAIN_PROVIDER: ${BLOCKCHAIN_PROVIDER:-mock}
       MOCK_PROVIDERS_ENABLED: ${MOCK_PROVIDERS_ENABLED:-true}
+      DEFAULT_QUOTE_TTL: "120"
+      DEFAULT_BUY_SPREAD_BPS: "400"
+      DEFAULT_SELL_SPREAD_BPS: "400"
       PAYMENT_WINDOW_SECONDS: "900"
+      QUOTE_SWEEP_INTERVAL_SECONDS: "30"
       CRYPTO_REQUIRED_CONFIRMATIONS: "3"
+      RATE_LIMIT_TTL: "60"
+      RATE_LIMIT_LIMIT: "300"
       CORS_ORIGIN: ${PUBLIC_URL}
     depends_on:
       postgres:

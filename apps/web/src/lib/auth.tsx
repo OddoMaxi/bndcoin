@@ -1,37 +1,45 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import type { AuthResponseDto, UserDto } from '@bn/shared-types';
 import { api, tokenStore } from './api-client';
 
-interface AuthState {
-  user: UserDto | null;
-  loading: boolean;
-  login: (phone: string, password: string) => Promise<void>;
-  register: (input: {
-    phone: string;
-    password: string;
-    firstName: string;
-    lastName: string;
-  }) => Promise<void>;
-  logout: () => void;
-  refreshUser: () => Promise<void>;
+export interface Me {
+  id: string;
+  publicUserId: string;
+  phone: string;
+  firstName: string;
+  lastName: string;
+  role: string;
+  status: string;
+  kycStatus: string;
+  kycLevel: string;
 }
 
-const AuthContext = createContext<AuthState | undefined>(undefined);
+interface AuthState {
+  user: Me | null;
+  loading: boolean;
+  requestOtp: (phone: string) => Promise<{ debugCode?: string }>;
+  verifyOtp: (phone: string, code: string) => Promise<void>;
+  loginPassword: (phone: string, password: string) => Promise<void>;
+  logout: () => void;
+  refresh: () => Promise<void>;
+}
+
+const Ctx = createContext<AuthState | undefined>(undefined);
+const isAdminRole = (r: string) => r !== 'CUSTOMER';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<UserDto | null>(null);
+  const [user, setUser] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refreshUser = useCallback(async () => {
+  const refresh = useCallback(async () => {
     if (!tokenStore.access) {
       setUser(null);
       setLoading(false);
       return;
     }
     try {
-      setUser(await api.get<UserDto>('/auth/me'));
+      setUser(await api.get<Me>('/auth/me'));
     } catch {
       tokenStore.clear();
       setUser(null);
@@ -41,41 +49,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void refreshUser();
-  }, [refreshUser]);
+    void refresh();
+  }, [refresh]);
 
-  const login = useCallback(async (phone: string, password: string) => {
-    const res = await api.post<AuthResponseDto>('/auth/login', { phone, password }, { auth: false });
+  const requestOtp = useCallback(async (phone: string) => {
+    return api.post<{ debugCode?: string }>('/auth/otp/request', { phone }, { auth: false });
+  }, []);
+
+  const verifyOtp = useCallback(async (phone: string, code: string) => {
+    const res = await api.post<{ accessToken: string; refreshToken: string; user: Me }>(
+      '/auth/otp/verify',
+      { phone, code, deviceLabel: 'web' },
+      { auth: false },
+    );
     tokenStore.set(res);
     setUser(res.user);
   }, []);
 
-  const register = useCallback(
-    async (input: { phone: string; password: string; firstName: string; lastName: string }) => {
-      const res = await api.post<AuthResponseDto>('/auth/register', input, { auth: false });
-      tokenStore.set(res);
-      setUser(res.user);
-    },
-    [],
-  );
+  const loginPassword = useCallback(async (phone: string, password: string) => {
+    const res = await api.post<{ accessToken: string; refreshToken: string; user: Me }>(
+      '/auth/login',
+      { phone, password },
+      { auth: false },
+    );
+    tokenStore.set(res);
+    setUser(res.user);
+  }, []);
 
   const logout = useCallback(() => {
-    const refresh = tokenStore.refresh;
-    if (refresh) void api.post('/auth/logout', { refreshToken: refresh }, { auth: false }).catch(() => {});
+    const r = tokenStore.refresh;
+    if (r) void api.post('/auth/logout', { refreshToken: r }, { auth: false }).catch(() => {});
     tokenStore.clear();
     setUser(null);
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout, refreshUser }),
-    [user, loading, login, register, logout, refreshUser],
+    () => ({ user, loading, requestOtp, verifyOtp, loginPassword, logout, refresh }),
+    [user, loading, requestOtp, verifyOtp, loginPassword, logout, refresh],
   );
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-export function useAuth(): AuthState {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within <AuthProvider>');
-  return ctx;
+export function useAuth() {
+  const c = useContext(Ctx);
+  if (!c) throw new Error('useAuth outside provider');
+  return c;
 }
+
+export { isAdminRole };

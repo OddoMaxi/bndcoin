@@ -1,11 +1,12 @@
-// Bory & Norbert — data model for the foundation + BUY USDT flow.
+// Bory & Norbert — V1 platform data model.
 //
-// Money & rate columns are DECIMAL(38,18). Application code always goes through
-// @bn/money (decimal.js) and quantises to the asset scale before persisting, so
-// these columns never carry more precision than the asset supports.
+// Modular monolith. Money/rate columns are DECIMAL(38,18); application code goes
+// through @bn/money (decimal.js) and quantises to asset scale before persisting.
+// Append-only tables (LedgerEntry, LedgerJournal, TransactionEvent-style event
+// tables, AuditLog) have no update/delete path in the service layer.
 //
-// TransactionEvent, TreasuryLedgerEntry and AuditLog are append-only: the
-// service layer exposes no update/delete path for them.
+// The double-entry LEDGER is the source of financial truth. TreasuryAccount /
+// InventoryLot balances are fast caches reconciled against the ledger.
 
 generator client {
   provider = "prisma-client-js"
@@ -16,21 +17,29 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // Enums
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 enum Role {
-  USER
-  ADMIN
-  TREASURY_OPS
+  SUPER_ADMIN
+  OPERATIONS
+  TREASURY
   COMPLIANCE
+  CUSTOMER_SUPPORT
+  EVENT_MANAGER
+  FINANCE
+  AUDITOR
+  ORGANIZER
+  SCANNER_OPERATOR
+  CUSTOMER
 }
 
 enum UserStatus {
   ACTIVE
   SUSPENDED
   PENDING_KYC
+  CLOSED
 }
 
 enum KycLevel {
@@ -39,39 +48,85 @@ enum KycLevel {
   FULL
 }
 
+enum KycStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum OtpChannel {
+  SMS
+  EMAIL
+}
+
+enum OtpPurpose {
+  LOGIN
+  PHONE_VERIFY
+  EMAIL_VERIFY
+  STEP_UP
+}
+
+enum OtpStatus {
+  CREATED
+  SENT
+  VERIFIED
+  EXPIRED
+  FAILED
+}
+
 enum Asset {
   GNF
   USDT
 }
 
-enum TradingPair {
-  GNF_USDT
-}
-
-enum TransactionType {
-  BUY
+enum QuoteSide {
+  BUY_USDT
+  SELL_USDT
 }
 
 enum QuoteStatus {
-  PENDING
-  ACCEPTED
+  ACTIVE
+  LOCKED
+  CONSUMED
   EXPIRED
   CANCELLED
 }
 
-enum TransactionStatus {
+enum CryptoOrderStatus {
+  // shared
   CREATED
   QUOTE_LOCKED
-  WAITING_PAYMENT
+  // buy
+  USDT_RESERVED
+  AWAITING_PAYMENT
   PAYMENT_DETECTED
-  PAYMENT_CONFIRMED
+  PAYMENT_RECONCILING
+  PAYMENT_VERIFIED
   USDT_PROCESSING
   USDT_SENT
+  // sell
+  AWAITING_CRYPTO
+  CRYPTO_DETECTED
+  CONFIRMING
+  CRYPTO_CONFIRMED
+  GNF_RESERVED
+  PAYOUT_PENDING
+  PAYOUT_PROCESSING
+  // terminal
   COMPLETED
-  EXPIRED
   FAILED
+  EXPIRED
   CANCELLED
-  MANUAL_REVIEW
+  UNDER_REVIEW
+  REFUNDED
 }
 
 enum ActorType {
@@ -79,10 +134,17 @@ enum ActorType {
   USER
   ADMIN
   PROVIDER
+  WORKER
 }
 
-enum PaymentMethod {
-  ORANGE_MONEY
+enum LedgerNormalSide {
+  DEBIT
+  CREDIT
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
 }
 
 enum ReservationStatus {
@@ -91,19 +153,14 @@ enum ReservationStatus {
   CONSUMED
 }
 
-enum LedgerDirection {
-  CREDIT
-  DEBIT
-}
-
-enum LedgerBucket {
-  AVAILABLE
-  RESERVED
-}
-
 enum ProviderType {
   PAYMENT
   CRYPTO
+  BLOCKCHAIN
+  SMS
+  EMAIL
+  PUSH
+  WALLET
 }
 
 enum ProviderOperationStatus {
@@ -124,43 +181,275 @@ enum LimitScope {
   KYC_LEVEL
 }
 
-enum AmlFlagStatus {
-  OPEN
-  CLEARED
-  CONFIRMED
+enum SupplierStatus {
+  UNVERIFIED
+  VERIFIED
+  REJECTED
 }
 
-// ---------------------------------------------------------------------------
-// Identity & access
-// ---------------------------------------------------------------------------
+enum SupplyStatus {
+  DRAFT
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELLED
+}
+
+enum PricingRuleKind {
+  TIER
+  SEGMENT
+  PROMO
+  EMERGENCY
+}
+
+enum PaymentMethod {
+  ORANGE_MONEY
+  USDT
+}
+
+enum PaymentIntentStatus {
+  CREATED
+  AWAITING_PAYMENT
+  PAYMENT_DETECTED
+  PAYMENT_RECONCILING
+  PAYMENT_VERIFIED
+  PAYMENT_REJECTED
+  EXPIRED
+  CANCELLED
+  UNDER_REVIEW
+}
+
+enum PayoutStatus {
+  PENDING
+  RESERVED
+  PROCESSING
+  RECONCILING
+  PAID
+  FAILED
+  CANCELLED
+  UNDER_REVIEW
+}
+
+enum ReconciliationStatus {
+  OPEN
+  MATCHED
+  MISMATCH
+  MANUAL_REVIEW
+  RESOLVED
+}
+
+enum ModemStatus {
+  ONLINE
+  AVAILABLE
+  BUSY
+  OFFLINE
+  SIM_ERROR
+  USSD_ERROR
+  LIMIT_REACHED
+  MAINTENANCE
+}
+
+enum SimStatus {
+  ACTIVE
+  BLOCKED
+  PUK_LOCKED
+  INACTIVE
+}
+
+enum OrangeSessionKind {
+  USSD
+  SMS
+  HEALTHCHECK
+  BALANCE
+}
+
+enum OrangeSessionStatus {
+  STARTED
+  SUCCESS
+  FAILED
+  TIMEOUT
+}
+
+enum CryptoNetworkStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+}
+
+enum DepositStatus {
+  PENDING
+  DETECTED
+  CONFIRMING
+  CONFIRMED
+  FAILED
+  EXPIRED
+}
+
+enum WithdrawalStatus {
+  CREATED
+  SIGNING
+  BROADCAST
+  CONFIRMING
+  CONFIRMED
+  FAILED
+}
+
+enum WalletKind {
+  DEPOSIT
+  HOT
+  COLD
+}
+
+enum EventCategory {
+  CONCERT
+  FESTIVAL
+  CONFERENCE
+  SPORT
+  NIGHTLIFE
+  CULTURE
+  BUSINESS
+  OTHER
+}
+
+enum EventStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PUBLISHED
+  SOLD_OUT
+  CANCELLED
+  COMPLETED
+}
+
+enum TicketTypeStatus {
+  ACTIVE
+  PAUSED
+  SOLD_OUT
+  HIDDEN
+}
+
+enum EventOrderStatus {
+  CREATED
+  AWAITING_PAYMENT
+  PAID
+  ISSUED
+  FAILED
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum TicketStatus {
+  VALID
+  USED
+  CANCELLED
+  REFUNDED
+  BLOCKED
+}
+
+enum CheckinResult {
+  VALID
+  ALREADY_USED
+  INVALID
+  BLOCKED
+  WRONG_EVENT
+}
+
+enum SettlementStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  PAID
+  FAILED
+  ON_HOLD
+}
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  PUSH
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  MOCKED
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+// ===========================================================================
+// Identity, sessions, KYC
+// ===========================================================================
 
 model User {
   id           String     @id @default(uuid())
+  publicUserId String     @unique
   phone        String     @unique
   email        String?    @unique
-  passwordHash String
+  phoneVerified Boolean   @default(false)
+  emailVerified Boolean   @default(false)
+  passwordHash String? // optional — phone+OTP is primary; kept for seeded ops accounts
   firstName    String
   lastName     String
-  role         Role       @default(USER)
+  dateOfBirth  DateTime?
+  country      String     @default("GN")
+  address      String?
+  role         Role       @default(CUSTOMER)
   status       UserStatus @default(ACTIVE)
   kycLevel     KycLevel   @default(NONE)
+  kycStatus    KycStatus  @default(UNVERIFIED)
+  riskLevel    RiskLevel  @default(LOW)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
+  sessions      Session[]
   refreshTokens RefreshToken[]
-  quotes        Quote[]
-  transactions  Transaction[]
-  kycProfile    KycProfile?
-  amlFlags      AmlFlag[]
+  otpRequests   OtpRequest[]
+  kycRecord     KycRecord?
+  quotes        PriceQuote[]
+  cryptoOrders  CryptoOrder[]
+  paymentIntents PaymentIntent[]
+  eventOrders   EventOrder[]
+  tickets       Ticket[]
+  organizer     Organizer?
+  notifications Notification[]
 
   @@index([role])
   @@index([status])
+  @@index([kycStatus])
+}
+
+model Session {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceLabel  String?
+  ip           String?
+  userAgent    String?
+  createdAt    DateTime  @default(now())
+  lastSeenAt   DateTime  @default(now())
+  revokedAt    DateTime?
+
+  @@index([userId])
 }
 
 model RefreshToken {
   id           String    @id @default(uuid())
   userId       String
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId    String?
   tokenHash    String    @unique
   expiresAt    DateTime
   revokedAt    DateTime?
@@ -171,201 +460,160 @@ model RefreshToken {
   @@index([userId])
 }
 
-model KycProfile {
-  id              String    @id @default(uuid())
-  userId          String    @unique
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  level           KycLevel  @default(NONE)
-  provider        String?
-  providerRef     String?
-  idType          String?
-  idNumber        String?
-  dateOfBirth     DateTime?
-  address         String?
-  verifiedAt      DateTime?
-  rejectionReason String?
-  rawPayload      Json?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+model OtpRequest {
+  id          String     @id @default(uuid())
+  userId      String?
+  user        User?      @relation(fields: [userId], references: [id])
+  channel     OtpChannel @default(SMS)
+  purpose     OtpPurpose @default(LOGIN)
+  destination String // phone or email
+  codeHash    String
+  status      OtpStatus  @default(CREATED)
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5)
+  sentAt      DateTime?
+  verifiedAt  DateTime?
+  expiresAt   DateTime
+  createdIp   String?
+  createdAt   DateTime   @default(now())
+
+  @@index([destination, status])
+  @@index([expiresAt])
 }
 
-// ---------------------------------------------------------------------------
-// Compliance scaffold (structure only in this iteration)
-// ---------------------------------------------------------------------------
+model KycRecord {
+  id                     String    @id @default(uuid())
+  userId                 String    @unique
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status                 KycStatus @default(UNVERIFIED)
+  identityDocumentType   String?
+  identityDocumentNumber String?
+  identityDocumentFront  String? // storage key
+  identityDocumentBack   String?
+  selfie                 String?
+  submittedAt            DateTime?
+  decidedAt              DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt             DateTime   @updatedAt
+
+  reviews KycReview[]
+}
+
+model KycReview {
+  id          String    @id @default(uuid())
+  kycRecordId String
+  kycRecord   KycRecord @relation(fields: [kycRecordId], references: [id], onDelete: Cascade)
+  reviewerId  String?
+  decision    KycStatus
+  reason      String?
+  snapshot    Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([kycRecordId, createdAt])
+}
 
 model TransactionLimit {
-  id         String      @id @default(uuid())
+  id         String     @id @default(uuid())
   scope      LimitScope
-  refId      String?
+  refId      String
   currency   Asset
-  perTxMin   Decimal     @db.Decimal(38, 18)
-  perTxMax   Decimal     @db.Decimal(38, 18)
-  dailyMax   Decimal     @db.Decimal(38, 18)
-  monthlyMax Decimal     @db.Decimal(38, 18)
-  active     Boolean     @default(true)
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  perTxMin   Decimal    @db.Decimal(38, 18)
+  perTxMax   Decimal    @db.Decimal(38, 18)
+  dailyMax   Decimal    @db.Decimal(38, 18)
+  monthlyMax Decimal    @db.Decimal(38, 18)
+  active     Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 
   @@unique([scope, refId, currency])
 }
 
-model AmlFlag {
-  id            String        @id @default(uuid())
-  userId        String?
-  user          User?         @relation(fields: [userId], references: [id])
-  transactionId String?
-  transaction   Transaction?  @relation(fields: [transactionId], references: [id])
-  type          String
-  severity      String
-  status        AmlFlagStatus @default(OPEN)
-  details       Json?
-  raisedBy      String?
-  resolvedBy    String?
-  resolvedAt    DateTime?
-  createdAt     DateTime      @default(now())
+// ===========================================================================
+// Double-entry ledger
+// ===========================================================================
 
-  @@index([status])
+model LedgerAccount {
+  id         String           @id @default(uuid())
+  code       String           @unique
+  name       String
+  type       String // ASSET | LIABILITY | REVENUE | EXPENSE | EQUITY
+  currency   Asset
+  normalSide LedgerNormalSide
+  active     Boolean          @default(true)
+  createdAt  DateTime         @default(now())
+
+  entries LedgerEntry[]
 }
 
-// ---------------------------------------------------------------------------
-// Pricing
-// ---------------------------------------------------------------------------
+/// Append-only. A balanced set of entries per currency.
+model LedgerJournal {
+  id            String   @id @default(uuid())
+  reference     String // e.g. "crypto_order:BN-XXXX"
+  referenceType String
+  referenceId   String
+  memo          String?
+  postedAt      DateTime @default(now())
+  createdBy     String?
 
-model PricingConfig {
-  id              String      @id @default(uuid())
-  pair            TradingPair @default(GNF_USDT)
-  marketRate      Decimal     @db.Decimal(38, 18)
-  buySpreadBps    Int
-  sellSpreadBps   Int         @default(0)
-  feeGnfFlat      Decimal     @default(0) @db.Decimal(38, 18)
-  minGnfAmount    Decimal     @db.Decimal(38, 18)
-  maxGnfAmount    Decimal     @db.Decimal(38, 18)
-  quoteTtlSeconds Int         @default(90)
-  version         Int
-  active          Boolean     @default(false)
-  createdBy       String?
-  createdAt       DateTime    @default(now())
+  entries LedgerEntry[]
 
-  @@unique([pair, version])
-  @@index([pair, active])
+  @@index([referenceType, referenceId])
+  @@index([postedAt])
 }
 
-// ---------------------------------------------------------------------------
-// Quotes
-// ---------------------------------------------------------------------------
+/// Append-only.
+model LedgerEntry {
+  id        String          @id @default(uuid())
+  journalId String
+  journal   LedgerJournal   @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  accountId String
+  account   LedgerAccount   @relation(fields: [accountId], references: [id])
+  currency  Asset
+  direction LedgerDirection
+  amount    Decimal         @db.Decimal(38, 18)
+  createdAt DateTime        @default(now())
 
-model Quote {
-  id                   String          @id @default(uuid())
-  publicId             String          @unique
-  userId               String
-  user                 User            @relation(fields: [userId], references: [id])
-  pair                 TradingPair     @default(GNF_USDT)
-  side                 TransactionType @default(BUY)
-  status               QuoteStatus     @default(PENDING)
-  marketRate           Decimal         @db.Decimal(38, 18)
-  bnRate               Decimal         @db.Decimal(38, 18)
-  spreadBps            Int
-  feeGnf               Decimal         @db.Decimal(38, 18)
-  gnfAmount            Decimal         @db.Decimal(38, 18)
-  usdtAmount           Decimal         @db.Decimal(38, 18)
-  pricingConfigVersion Int
-  expiresAt            DateTime
-  acceptedAt           DateTime?
-  transactionId        String?         @unique
-  transaction          Transaction?    @relation(fields: [transactionId], references: [id])
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
-
-  @@index([userId])
-  @@index([status, expiresAt])
+  @@index([accountId, createdAt])
 }
 
-// ---------------------------------------------------------------------------
-// Transactions
-// ---------------------------------------------------------------------------
-
-model Transaction {
-  id                  String            @id @default(uuid())
-  publicId            String            @unique
-  userId              String
-  user                User              @relation(fields: [userId], references: [id])
-  type                TransactionType   @default(BUY)
-  status              TransactionStatus @default(CREATED)
-  pair                TradingPair       @default(GNF_USDT)
-
-  marketRate Decimal @db.Decimal(38, 18)
-  bnRate     Decimal @db.Decimal(38, 18)
-  feeGnf     Decimal @db.Decimal(38, 18)
-  gnfAmount  Decimal @db.Decimal(38, 18)
-  usdtAmount Decimal @db.Decimal(38, 18)
-
-  destinationAddress String
-
-  paymentProviderKey String
-  paymentProviderRef String?
-  paymentMethod      PaymentMethod @default(ORANGE_MONEY)
-  payerPhone         String?
-  paymentExpiresAt   DateTime?
-
-  cryptoProviderKey  String
-  cryptoTxHash       String?
-  cryptoConfirmations Int    @default(0)
-
-  failureReason      String?
-  manualReviewReason String?
-  idempotencyKey     String?
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  completedAt DateTime?
-
-  quote        Quote?
-  events       TransactionEvent[]
-  reservations LiquidityReservation[]
-  providerOps  ProviderOperation[]
-  mockEvents   MockEvent[]
-  amlFlags     AmlFlag[]
-
-  @@index([status])
-  @@index([userId, createdAt])
-  @@index([paymentExpiresAt])
-}
-
-/// Append-only. One row per accepted state transition.
-model TransactionEvent {
-  id             String             @id @default(uuid())
-  transactionId  String
-  transaction    Transaction        @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  previousStatus TransactionStatus?
-  nextStatus     TransactionStatus
-  event          String
-  actorType      ActorType          @default(SYSTEM)
-  actorId        String?
-  reason         String?
-  metadata       Json?
-  createdAt      DateTime           @default(now())
-
-  // Makes deterministic transitions idempotent: the same logical event can only
-  // be recorded once per transaction.
-  @@unique([transactionId, event, nextStatus])
-  @@index([transactionId, createdAt])
-}
-
-// ---------------------------------------------------------------------------
-// Treasury
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Treasury, suppliers, inventory (weighted average cost)
+// ===========================================================================
 
 model TreasuryAccount {
   id        String   @id @default(uuid())
-  asset     Asset    @unique
+  asset     Asset
+  bucket    String   @default("MAIN") // MAIN | HOT | COLD | PDV_01 | PDV_02 | IN_TRANSIT | ...
   available Decimal  @default(0) @db.Decimal(38, 18)
   reserved  Decimal  @default(0) @db.Decimal(38, 18)
   version   Int      @default(0)
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 
-  reservations  LiquidityReservation[]
-  ledgerEntries TreasuryLedgerEntry[]
+  reservations LiquidityReservation[]
+  movements    TreasuryMovement[]
+
+  @@unique([asset, bucket])
+}
+
+/// Append-only movement log for a treasury bucket (available/reserved deltas).
+model TreasuryMovement {
+  id                String          @id @default(uuid())
+  treasuryAccountId String
+  treasuryAccount   TreasuryAccount @relation(fields: [treasuryAccountId], references: [id])
+  asset             Asset
+  bucket            String
+  field             String // AVAILABLE | RESERVED
+  direction         LedgerDirection
+  amount            Decimal         @db.Decimal(38, 18)
+  balanceAfter      Decimal         @db.Decimal(38, 18)
+  refType           String
+  refId             String?
+  memo              String?
+  createdAt         DateTime        @default(now())
+
+  @@index([asset, bucket, createdAt])
+  @@index([refType, refId])
 }
 
 model LiquidityReservation {
@@ -375,9 +623,8 @@ model LiquidityReservation {
   asset             Asset
   amount            Decimal           @db.Decimal(38, 18)
   status            ReservationStatus @default(HELD)
-  quoteId           String?
-  transactionId     String?
-  transaction       Transaction?      @relation(fields: [transactionId], references: [id])
+  refType           String // crypto_order | event_order | payout | ...
+  refId             String
   reason            String
   expiresAt         DateTime?
   releasedAt        DateTime?
@@ -386,40 +633,669 @@ model LiquidityReservation {
   updatedAt         DateTime          @updatedAt
 
   @@index([status])
-  @@index([transactionId])
-}
-
-/// Append-only. Every movement of AVAILABLE or RESERVED funds.
-model TreasuryLedgerEntry {
-  id                     String          @id @default(uuid())
-  treasuryAccountId      String
-  treasuryAccount        TreasuryAccount @relation(fields: [treasuryAccountId], references: [id])
-  asset                  Asset
-  direction              LedgerDirection
-  bucket                 LedgerBucket
-  amount                 Decimal         @db.Decimal(38, 18)
-  balanceAfterAvailable  Decimal         @db.Decimal(38, 18)
-  balanceAfterReserved   Decimal         @db.Decimal(38, 18)
-  refType                String
-  refId                  String?
-  memo                   String?
-  createdAt              DateTime        @default(now())
-
-  @@index([asset, createdAt])
   @@index([refType, refId])
 }
 
-// ---------------------------------------------------------------------------
-// Provider & idempotency plumbing
-// ---------------------------------------------------------------------------
+model Supplier {
+  id                 String         @id @default(uuid())
+  name               String
+  type               String         @default("INDIVIDUAL")
+  phone              String?
+  email              String?
+  company            String?
+  verificationStatus SupplierStatus @default(UNVERIFIED)
+  notes              String?
+  active             Boolean        @default(true)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  purchases SupplierPurchase[]
+}
+
+model SupplierPurchase {
+  id               String       @id @default(uuid())
+  publicId         String       @unique
+  supplierId       String
+  supplier         Supplier     @relation(fields: [supplierId], references: [id])
+  quantityUsdt     Decimal      @db.Decimal(38, 18)
+  purchaseCurrency Asset        @default(GNF)
+  purchaseAmount   Decimal      @db.Decimal(38, 18)
+  unitCostGnf      Decimal      @db.Decimal(38, 18)
+  network          String?
+  txHash           String?
+  paymentReference String?
+  status           SupplyStatus @default(DRAFT)
+  notes            String?
+  confirmedAt      DateTime?
+  createdBy        String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  lot InventoryLot?
+}
+
+/// USDT inventory lot, consumed FIFO for realized COGS. Created from a confirmed
+/// supplier purchase or from a completed SELL order (USDT acquired from a user).
+model InventoryLot {
+  id                String            @id @default(uuid())
+  sourceType        String            @default("SUPPLIER_PURCHASE") // SUPPLIER_PURCHASE | SELL_ORDER
+  sourceRef         String
+  purchaseId        String?           @unique
+  purchase          SupplierPurchase? @relation(fields: [purchaseId], references: [id])
+  asset             Asset             @default(USDT)
+  quantity          Decimal           @db.Decimal(38, 18)
+  quantityRemaining Decimal           @db.Decimal(38, 18)
+  unitCostGnf       Decimal           @db.Decimal(38, 18)
+  createdAt         DateTime          @default(now())
+
+  @@index([asset, quantityRemaining])
+}
+
+// ===========================================================================
+// Pricing engine
+// ===========================================================================
+
+model PricingConfig {
+  id             String   @id @default(uuid())
+  referenceRate  Decimal  @db.Decimal(38, 18) // GNF per USDT, mid
+  riskBufferBps  Int      @default(0)
+  quoteTtlSeconds Int     @default(120)
+  minGnfAmount   Decimal  @db.Decimal(38, 18)
+  maxGnfAmount   Decimal  @db.Decimal(38, 18)
+  minUsdtAmount  Decimal  @db.Decimal(38, 18)
+  maxUsdtAmount  Decimal  @db.Decimal(38, 18)
+  version        Int
+  active         Boolean  @default(false)
+  createdBy      String?
+  createdAt      DateTime @default(now())
+
+  @@unique([version])
+  @@index([active])
+}
+
+model PricingRule {
+  id          String          @id @default(uuid())
+  kind        PricingRuleKind @default(TIER)
+  side        QuoteSide
+  minUsdt     Decimal         @default(0) @db.Decimal(38, 18)
+  maxUsdt     Decimal?        @db.Decimal(38, 18)
+  segment     String? // client segment / promo code / null = any
+  spreadAbs   Decimal         @default(0) @db.Decimal(38, 18) // GNF per USDT
+  spreadPct   Decimal         @default(0) @db.Decimal(38, 18) // fraction (0.01 = 1%)
+  feeFixedGnf Decimal         @default(0) @db.Decimal(38, 18)
+  feePct      Decimal         @default(0) @db.Decimal(38, 18)
+  priority    Int             @default(100)
+  active      Boolean         @default(true)
+  validFrom   DateTime?
+  validTo     DateTime?
+  createdBy   String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([side, active, priority])
+}
+
+// ===========================================================================
+// Quotes & crypto orders
+// ===========================================================================
+
+model PriceQuote {
+  id            String      @id @default(uuid())
+  publicId      String      @unique
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  side          QuoteSide
+  status        QuoteStatus @default(ACTIVE)
+  referenceRate Decimal     @db.Decimal(38, 18)
+  spread        Decimal     @db.Decimal(38, 18)
+  fees          Decimal     @db.Decimal(38, 18) // GNF
+  finalRate     Decimal     @db.Decimal(38, 18) // GNF per USDT the client transacts at
+  gnfAmount     Decimal     @db.Decimal(38, 18)
+  usdtAmount    Decimal     @db.Decimal(38, 18)
+  networkId     String?
+  segment       String?
+  pricingVersion Int
+  expiresAt     DateTime
+  lockedAt      DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  order CryptoOrder?
+
+  @@index([userId])
+  @@index([status, expiresAt])
+}
+
+model CryptoOrder {
+  id       String            @id @default(uuid())
+  publicId String            @unique
+  userId   String
+  user     User              @relation(fields: [userId], references: [id])
+  side     QuoteSide
+  status   CryptoOrderStatus @default(CREATED)
+
+  quoteId String?     @unique
+  quote   PriceQuote? @relation(fields: [quoteId], references: [id])
+
+  referenceRate Decimal @db.Decimal(38, 18)
+  finalRate     Decimal @db.Decimal(38, 18)
+  feesGnf       Decimal @db.Decimal(38, 18)
+  gnfAmount     Decimal @db.Decimal(38, 18)
+  usdtAmount    Decimal @db.Decimal(38, 18)
+  cogsGnf       Decimal? @db.Decimal(38, 18) // realized cost of USDT sold (SELL side)
+  marginGnf     Decimal? @db.Decimal(38, 18)
+
+  networkId          String?
+  network            CryptoNetwork? @relation(fields: [networkId], references: [id])
+  destinationAddress String? // BUY: where we send USDT
+  depositAddress     String? // SELL: where the user sends USDT
+
+  paymentIntentId String?        @unique
+  paymentIntent   PaymentIntent? @relation(fields: [paymentIntentId], references: [id])
+  payoutId        String?        @unique
+  payout          Payout?        @relation(fields: [payoutId], references: [id])
+
+  failureReason String?
+  reviewReason  String?
+  idempotencyKey String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  completedAt   DateTime?
+
+  events      CryptoOrderEvent[]
+  deposits    CryptoDeposit[]
+  withdrawals CryptoWithdrawal[]
+
+  @@index([status])
+  @@index([userId, createdAt])
+  @@index([side])
+}
+
+/// Append-only.
+model CryptoOrderEvent {
+  id             String             @id @default(uuid())
+  orderId        String
+  order          CryptoOrder        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  previousStatus CryptoOrderStatus?
+  nextStatus     CryptoOrderStatus
+  event          String
+  actorType      ActorType          @default(SYSTEM)
+  actorId        String?
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime           @default(now())
+
+  @@unique([orderId, event, nextStatus])
+  @@index([orderId, createdAt])
+}
+
+// ===========================================================================
+// Crypto networks / wallets / on-chain txns
+// ===========================================================================
+
+model CryptoNetwork {
+  id                   String              @id @default(uuid())
+  key                  String              @unique // e.g. TRON, ETH
+  asset                Asset               @default(USDT)
+  networkName          String
+  enabled              Boolean             @default(false)
+  depositEnabled       Boolean             @default(false)
+  withdrawEnabled      Boolean             @default(false)
+  confirmationsRequired Int                @default(12)
+  minimumAmount        Decimal             @default(0) @db.Decimal(38, 18)
+  withdrawalFee        Decimal             @default(0) @db.Decimal(38, 18)
+  contractAddress      String?
+  explorerUrl          String?
+  addressRegex         String?
+  status               CryptoNetworkStatus @default(DISABLED)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  addresses   WalletAddress[]
+  deposits    CryptoDeposit[]
+  withdrawals CryptoWithdrawal[]
+  orders      CryptoOrder[]
+}
+
+model WalletAddress {
+  id             String     @id @default(uuid())
+  networkId      String
+  network        CryptoNetwork @relation(fields: [networkId], references: [id])
+  asset          Asset      @default(USDT)
+  kind           WalletKind @default(DEPOSIT)
+  address        String
+  derivationRef  String?
+  assignedRefType String?
+  assignedRefId  String?
+  active         Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+
+  @@unique([networkId, address])
+  @@index([assignedRefType, assignedRefId])
+}
+
+model CryptoDeposit {
+  id            String        @id @default(uuid())
+  orderId       String?
+  order         CryptoOrder?  @relation(fields: [orderId], references: [id])
+  networkId     String
+  network       CryptoNetwork @relation(fields: [networkId], references: [id])
+  asset         Asset         @default(USDT)
+  address       String
+  amount        Decimal       @db.Decimal(38, 18)
+  txHash        String?
+  confirmations Int           @default(0)
+  status        DepositStatus @default(PENDING)
+  detectedAt    DateTime?
+  confirmedAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([status])
+  @@index([address])
+}
+
+model CryptoWithdrawal {
+  id             String           @id @default(uuid())
+  orderId        String?
+  order          CryptoOrder?     @relation(fields: [orderId], references: [id])
+  networkId      String
+  network        CryptoNetwork    @relation(fields: [networkId], references: [id])
+  asset          Asset            @default(USDT)
+  toAddress      String
+  amount         Decimal          @db.Decimal(38, 18)
+  fee            Decimal          @default(0) @db.Decimal(38, 18)
+  txHash         String?
+  confirmations  Int              @default(0)
+  status         WithdrawalStatus @default(CREATED)
+  idempotencyKey String           @unique
+  broadcastAt    DateTime?
+  confirmedAt    DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([status])
+}
+
+// ===========================================================================
+// Payments (Orange Money) & reconciliation
+// ===========================================================================
+
+model PaymentIntent {
+  id               String              @id @default(uuid())
+  publicId         String              @unique
+  userId           String?
+  user             User?               @relation(fields: [userId], references: [id])
+  refType          String // crypto_order | event_order
+  refId            String
+  method           PaymentMethod       @default(ORANGE_MONEY)
+  amount           Decimal             @db.Decimal(38, 18)
+  currency         Asset               @default(GNF)
+  customerPhone    String?
+  assignedGateway  String?
+  assignedModemId  String?
+  assignedModem    OrangeModem?        @relation(fields: [assignedModemId], references: [id])
+  externalReference String?
+  status           PaymentIntentStatus @default(CREATED)
+  expiresAt        DateTime?
+  verifiedAt       DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  events         PaymentEvent[]
+  reconciliations Reconciliation[]
+  cryptoOrder    CryptoOrder?
+  eventOrder     EventOrder?
+
+  @@index([status])
+  @@index([refType, refId])
+}
+
+/// Append-only.
+model PaymentEvent {
+  id        String        @id @default(uuid())
+  intentId  String
+  intent    PaymentIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  type      String
+  source    String // MODEM | SMS | USSD | ADMIN | SYSTEM
+  payload   Json?
+  createdAt DateTime      @default(now())
+
+  @@index([intentId, createdAt])
+}
+
+model Payout {
+  id             String       @id @default(uuid())
+  publicId       String       @unique
+  refType        String // crypto_order | settlement
+  refId          String
+  method         PaymentMethod @default(ORANGE_MONEY)
+  amount         Decimal      @db.Decimal(38, 18)
+  currency       Asset        @default(GNF)
+  toPhone        String
+  assignedModemId String?
+  assignedModem  OrangeModem? @relation(fields: [assignedModemId], references: [id])
+  externalReference String?
+  status         PayoutStatus @default(PENDING)
+  idempotencyKey String       @unique
+  attempts       Int          @default(0)
+  failureReason  String?
+  paidAt         DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  events         PayoutEvent[]
+  reconciliations Reconciliation[]
+  cryptoOrder    CryptoOrder?
+  settlement     Settlement?
+
+  @@index([status])
+  @@index([refType, refId])
+}
+
+/// Append-only.
+model PayoutEvent {
+  id        String   @id @default(uuid())
+  payoutId  String
+  payout    Payout   @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  type      String
+  source    String
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([payoutId, createdAt])
+}
+
+model Reconciliation {
+  id              String               @id @default(uuid())
+  intentId        String?
+  intent          PaymentIntent?       @relation(fields: [intentId], references: [id])
+  payoutId        String?
+  payout          Payout?              @relation(fields: [payoutId], references: [id])
+  kind            String // PAYMENT | PAYOUT
+  status          ReconciliationStatus @default(OPEN)
+  expectedAmount  Decimal?             @db.Decimal(38, 18)
+  observedAmount  Decimal?             @db.Decimal(38, 18)
+  correlation     Json? // {order, phone, ref, ussd, sms, timestamps, internalState}
+  mismatchReason  String?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  notes           String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([status])
+  @@index([kind])
+}
+
+// ===========================================================================
+// Orange Money gateway / modems / SIMs
+// ===========================================================================
+
+model OrangeGateway {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  mode      String   @default("mock") // mock | modem
+  status    String   @default("ONLINE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrangeSim {
+  id          String    @id @default(uuid())
+  msisdn      String    @unique
+  label       String?
+  status      SimStatus @default(ACTIVE)
+  balanceGnf  Decimal   @default(0) @db.Decimal(38, 18)
+  dailyLimit  Decimal   @default(0) @db.Decimal(38, 18)
+  monthlyLimit Decimal  @default(0) @db.Decimal(38, 18)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  modem OrangeModem?
+}
+
+model OrangeModem {
+  id              String      @id @default(uuid())
+  name            String      @unique
+  serialPort      String?
+  imei            String?
+  simId           String?     @unique
+  sim             OrangeSim?  @relation(fields: [simId], references: [id])
+  phoneNumber     String?
+  status          ModemStatus @default(OFFLINE)
+  balanceGnf      Decimal     @default(0) @db.Decimal(38, 18)
+  dailyTxCount    Int         @default(0)
+  dailyVolume     Decimal     @default(0) @db.Decimal(38, 18)
+  dailyLimit      Decimal     @default(0) @db.Decimal(38, 18)
+  lastActivityAt  DateTime?
+  lastHealthcheckAt DateTime?
+  lastError       String?
+  errorCount      Int         @default(0)
+  recentFailures  Int         @default(0)
+  activeJobs      Int         @default(0)
+  enabled         Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  sessions       OrangeSession[]
+  paymentIntents PaymentIntent[]
+  payouts        Payout[]
+
+  @@index([status, enabled])
+}
+
+/// Append-only-ish log of modem communications.
+model OrangeSession {
+  id        String              @id @default(uuid())
+  modemId   String
+  modem     OrangeModem         @relation(fields: [modemId], references: [id], onDelete: Cascade)
+  kind      OrangeSessionKind
+  command   String?
+  response  String?
+  refType   String?
+  refId     String?
+  status    OrangeSessionStatus @default(STARTED)
+  startedAt DateTime            @default(now())
+  endedAt   DateTime?
+
+  @@index([modemId, startedAt])
+  @@index([refType, refId])
+}
+
+// ===========================================================================
+// Events / tickets / check-in / settlement
+// ===========================================================================
+
+model Organizer {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id])
+  name           String
+  slug           String   @unique
+  status         String   @default("PENDING") // PENDING | APPROVED | SUSPENDED
+  commissionPct  Decimal  @default(0.05) @db.Decimal(38, 18)
+  payoutMsisdn   String?
+  contactEmail   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  events      Event[]
+  settlements Settlement[]
+}
+
+model Event {
+  id          String        @id @default(uuid())
+  organizerId String
+  organizer   Organizer     @relation(fields: [organizerId], references: [id])
+  title       String
+  slug        String        @unique
+  description String?
+  category    EventCategory @default(OTHER)
+  coverImage  String?
+  gallery     Json?
+  venue       String?
+  address     String?
+  city        String?
+  country     String        @default("GN")
+  eventDate   DateTime
+  startTime   String?
+  endTime     String?
+  salesStart  DateTime?
+  salesEnd    DateTime?
+  status      EventStatus   @default(DRAFT)
+  featured    Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  ticketTypes TicketType[]
+  orders      EventOrder[]
+  tickets     Ticket[]
+  checkins    Checkin[]
+  settlements Settlement[]
+
+  @@index([status, featured])
+  @@index([eventDate])
+}
+
+model TicketType {
+  id           String           @id @default(uuid())
+  eventId      String
+  event        Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  priceGnf     Decimal          @db.Decimal(38, 18)
+  priceUsdt    Decimal?         @db.Decimal(38, 18)
+  quantity     Int
+  quantitySold Int              @default(0)
+  maxPerOrder  Int              @default(10)
+  salesStart   DateTime?
+  salesEnd     DateTime?
+  status       TicketTypeStatus @default(ACTIVE)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  orderItems EventOrderItem[]
+  tickets    Ticket[]
+
+  @@index([eventId])
+}
+
+model EventOrder {
+  id              String           @id @default(uuid())
+  publicId        String           @unique
+  userId          String
+  user            User             @relation(fields: [userId], references: [id])
+  eventId         String
+  event           Event            @relation(fields: [eventId], references: [id])
+  status          EventOrderStatus @default(CREATED)
+  currency        Asset            @default(GNF)
+  subtotalGnf     Decimal          @db.Decimal(38, 18)
+  amountGnf       Decimal          @db.Decimal(38, 18)
+  amountUsdt      Decimal?         @db.Decimal(38, 18)
+  platformFeeGnf  Decimal          @default(0) @db.Decimal(38, 18)
+  organizerNetGnf Decimal          @default(0) @db.Decimal(38, 18)
+  paymentIntentId String?          @unique
+  paymentIntent   PaymentIntent?   @relation(fields: [paymentIntentId], references: [id])
+  cryptoOrderId   String?
+  expiresAt       DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  items   EventOrderItem[]
+  tickets Ticket[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model EventOrderItem {
+  id           String     @id @default(uuid())
+  orderId      String
+  order        EventOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ticketTypeId String
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id])
+  quantity     Int
+  unitPriceGnf Decimal    @db.Decimal(38, 18)
+  createdAt    DateTime   @default(now())
+}
+
+model Ticket {
+  id             String       @id @default(uuid())
+  publicTicketId String       @unique
+  eventId        String
+  event          Event        @relation(fields: [eventId], references: [id])
+  ticketTypeId   String
+  ticketType     TicketType   @relation(fields: [ticketTypeId], references: [id])
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+  orderId        String
+  order          EventOrder   @relation(fields: [orderId], references: [id])
+  qrToken        String       @unique
+  signature      String
+  status         TicketStatus @default(VALID)
+  issuedAt       DateTime     @default(now())
+  usedAt         DateTime?
+  usedGate       String?
+  usedBy         String?
+
+  checkins Checkin[]
+
+  @@index([eventId, status])
+  @@index([userId])
+}
+
+/// Append-only.
+model Checkin {
+  id         String        @id @default(uuid())
+  ticketId   String
+  ticket     Ticket        @relation(fields: [ticketId], references: [id])
+  eventId    String
+  event      Event         @relation(fields: [eventId], references: [id])
+  gate       String?
+  scannedBy  String?
+  result     CheckinResult
+  scannedAt  DateTime      @default(now())
+
+  @@index([eventId, scannedAt])
+  @@index([ticketId])
+}
+
+model Settlement {
+  id            String           @id @default(uuid())
+  publicId      String           @unique
+  organizerId   String
+  organizer     Organizer        @relation(fields: [organizerId], references: [id])
+  eventId       String?
+  event         Event?           @relation(fields: [eventId], references: [id])
+  grossGnf      Decimal          @db.Decimal(38, 18)
+  platformFeeGnf Decimal         @db.Decimal(38, 18)
+  organizerNetGnf Decimal        @db.Decimal(38, 18)
+  settledGnf    Decimal          @default(0) @db.Decimal(38, 18)
+  status        SettlementStatus @default(PENDING)
+  payoutId      String?          @unique
+  payout        Payout?          @relation(fields: [payoutId], references: [id])
+  periodStart   DateTime?
+  periodEnd     DateTime?
+  approvedBy    String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([organizerId, status])
+}
+
+// ===========================================================================
+// Platform plumbing
+// ===========================================================================
 
 model ProviderOperation {
   id             String                  @id @default(uuid())
   providerType   ProviderType
   providerKey    String
   operation      String
-  transactionId  String?
-  transaction    Transaction?            @relation(fields: [transactionId], references: [id])
+  refType        String?
+  refId          String?
   idempotencyKey String                  @unique
   request        Json?
   response       Json?
@@ -429,8 +1305,8 @@ model ProviderOperation {
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt
 
-  @@index([transactionId])
   @@index([providerType, providerKey])
+  @@index([refType, refId])
 }
 
 model IdempotencyKey {
@@ -450,30 +1326,27 @@ model IdempotencyKey {
   @@index([expiresAt])
 }
 
-/// Dev-only. Records a simulated provider callback pushed via /mock/*.
+/// Dev-only simulated provider callbacks.
 model MockEvent {
-  id            String       @id @default(uuid())
-  providerType  ProviderType
-  providerKey   String
-  transactionId String?
-  transaction   Transaction? @relation(fields: [transactionId], references: [id])
-  scenario      String
-  payload       Json?
-  processedAt   DateTime?
-  createdAt     DateTime     @default(now())
+  id           String       @id @default(uuid())
+  providerType ProviderType
+  providerKey  String
+  refType      String?
+  refId        String?
+  scenario     String
+  payload      Json?
+  processedAt  DateTime?
+  createdAt    DateTime     @default(now())
 
-  @@index([transactionId])
+  @@index([refType, refId])
 }
 
-// ---------------------------------------------------------------------------
-// Audit
-// ---------------------------------------------------------------------------
-
-/// Append-only. Written inside the same DB transaction as the change it records.
+/// Append-only.
 model AuditLog {
   id         String    @id @default(uuid())
-  actorType  ActorType @default(SYSTEM)
+  actorType  ActorType  @default(SYSTEM)
   actorId    String?
+  actorRole  String?
   action     String
   entityType String
   entityId   String
@@ -487,4 +1360,43 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([actorId])
   @@index([createdAt])
+}
+
+model Notification {
+  id         String              @id @default(uuid())
+  userId     String?
+  user       User?               @relation(fields: [userId], references: [id])
+  channel    NotificationChannel
+  template   String
+  destination String
+  payload    Json?
+  status     NotificationStatus  @default(QUEUED)
+  sentAt     DateTime?
+  error      String?
+  createdAt  DateTime            @default(now())
+
+  @@index([status])
+  @@index([userId])
+}
+
+model Alert {
+  id         String        @id @default(uuid())
+  severity   AlertSeverity
+  code       String
+  message    String
+  context    Json?
+  status     AlertStatus   @default(OPEN)
+  resolvedBy String?
+  resolvedAt DateTime?
+  createdAt  DateTime      @default(now())
+
+  @@index([status, severity])
+  @@index([code])
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
 }

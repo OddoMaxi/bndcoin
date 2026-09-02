@@ -1,4 +1,4 @@
-import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppConfigModule } from './common/config/config.module';
@@ -10,20 +10,28 @@ import { RbacModule } from './common/rbac/rbac.module';
 import { IdempotencyModule } from './common/idempotency/idempotency.module';
 import { QueueModule } from './common/queue/queue.module';
 import { MockModule } from './common/mock/mock.module';
-import { HealthModule } from './common/health/health.module';
+import { LedgerModule } from './common/ledger/ledger.module';
+import { PlatformModule } from './common/platform/platform.module';
 import { RequestContextMiddleware } from './common/context/request-context.middleware';
 import { AllExceptionsFilter } from './common/errors/all-exceptions.filter';
+import { BootstrapService } from './common/bootstrap/bootstrap.service';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
-import { PricingModule } from './modules/pricing/pricing.module';
-import { QuotesModule } from './modules/quotes/quotes.module';
 import { TreasuryModule } from './modules/treasury/treasury.module';
-import { PaymentProvidersModule } from './modules/payment-providers/payment-providers.module';
-import { CryptoProvidersModule } from './modules/crypto-providers/crypto-providers.module';
-import { TransactionsModule } from './modules/transactions/transactions.module';
-import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
+import { SuppliersModule } from './modules/suppliers/suppliers.module';
+import { PricingModule } from './modules/pricing/pricing.module';
+import { CryptoModule } from './modules/crypto/crypto.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { OrangeModule } from './modules/orange/orange.module';
+import { ReconciliationModule } from './modules/reconciliation/reconciliation.module';
+import { EventsModule } from './modules/events/events.module';
+import { OrganizersModule } from './modules/organizers/organizers.module';
+import { TicketsModule } from './modules/tickets/tickets.module';
+import { SettlementsModule } from './modules/settlements/settlements.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { MockControlModule } from './modules/mock-control/mock-control.module';
+import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
+import { SystemModule } from './modules/system/system.module';
 
 @Module({
   imports: [
@@ -32,31 +40,37 @@ import { MockControlModule } from './modules/mock-control/mock-control.module';
     RedisModule,
     MockModule,
     AuditModule,
+    LedgerModule,
+    PlatformModule,
     RbacModule,
     IdempotencyModule,
     QueueModule,
     ThrottlerModule.forRootAsync({
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({
-        throttlers: [
-          { ttl: config.rateLimit.ttl * 1000, limit: config.rateLimit.limit },
-        ],
+        throttlers: [{ ttl: config.rateLimit.ttl * 1000, limit: config.rateLimit.limit }],
       }),
     }),
-    HealthModule,
     AuthModule,
     UsersModule,
-    PricingModule,
-    QuotesModule,
     TreasuryModule,
-    PaymentProvidersModule,
-    CryptoProvidersModule,
-    TransactionsModule,
-    AuditLogsModule,
+    SuppliersModule,
+    PricingModule,
+    CryptoModule,
+    PaymentsModule,
+    OrangeModule,
+    ReconciliationModule,
+    EventsModule,
+    OrganizersModule,
+    TicketsModule,
+    SettlementsModule,
     AdminModule,
     MockControlModule,
+    AuditLogsModule,
+    SystemModule,
   ],
   providers: [
+    BootstrapService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],

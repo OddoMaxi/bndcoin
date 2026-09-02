@@ -9,14 +9,15 @@ export interface AuditEntry {
   entityId: string;
   actorType?: ActorType;
   actorId?: string | null;
+  actorRole?: string | null;
   before?: unknown;
   after?: unknown;
 }
 
 /**
  * Append-only audit trail. `record` MUST be called with the same transaction
- * client as the change it describes, so the audit row commits atomically with
- * the mutation (or not at all).
+ * client as the change it describes, so the audit row commits atomically.
+ * Never store secrets, private keys or raw KYC document bytes here.
  */
 @Injectable()
 export class AuditService {
@@ -31,6 +32,7 @@ export class AuditService {
         entityId: entry.entityId,
         actorType: entry.actorType ?? (ctx?.userId ? ActorType.USER : ActorType.SYSTEM),
         actorId: entry.actorId ?? ctx?.userId ?? null,
+        actorRole: entry.actorRole ?? ctx?.actorRole ?? null,
         before: entry.before == null ? undefined : (entry.before as Prisma.InputJsonValue),
         after: entry.after == null ? undefined : (entry.after as Prisma.InputJsonValue),
         ip: ctx?.ip,
@@ -40,7 +42,6 @@ export class AuditService {
     });
   }
 
-  /** Convenience for call sites that are not already inside a transaction. */
   async recordStandalone(entry: AuditEntry): Promise<void> {
     await this.prisma.runInTransaction((tx) => this.record(tx, entry));
   }
