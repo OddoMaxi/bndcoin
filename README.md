@@ -1,290 +1,146 @@
-# Bory & Norbert — Foundation + BUY USDT flow
+# Bory & Norbert — V1 platform
 
-A Guinea-focused GNF ⇄ USDT exchange with a mobile-money-style experience.
-This repository is **iteration 1**: the technical foundation and the **BUY USDT**
-transaction flow only. No SELL flow, no notifications, no affiliate program, no
-real provider integrations yet.
+A Guinea-focused fintech platform with **two business lines**:
 
-> The application never depends on Orange Money, Binance or any vendor directly.
-> Everything goes through `PaymentProvider` / `CryptoProvider` abstractions with
-> **mock implementations** shipped first.
+- **Crypto** — buy USDT with GNF, sell USDT for GNF (the platform runs its own
+  USDT treasury; supply is manual/external in V1).
+- **Events** — discover events, buy tickets in GNF or USDT, secure signed-QR
+  ticketing, organiser management, gate check-in scanner.
 
----
+Payments run over **Orange Money PDV SIMs in GSM modems**, behind a gateway that
+is architecturally separate from business logic. Everything financial is double-
+entry booked and reconciled.
 
-## Contents
+> **Nothing external is faked.** Blockchain, on-chain wallet signing, physical
+> Orange modems, SMS/email/push all sit behind interfaces with a **mock** adapter
+> and an **unconfigured live** adapter. Master switches (`REAL_MONEY_MODE`,
+> `REAL_CRYPTO_MODE`, `ORANGE_MODE`, `OTP_MODE`, `BLOCKCHAIN_PROVIDER`) stay in
+> mock/`false` until real credentials and hardware are wired, and the API refuses
+> to start a real mode without its dependencies.
 
-- [Architecture](#architecture)
-- [Tech stack](#tech-stack)
-- [Prerequisites](#prerequisites)
-- [Quick start](#quick-start)
-- [Running the BUY flow](#running-the-buy-flow)
-- [Transaction state machine](#transaction-state-machine)
-- [Provider abstraction](#provider-abstraction)
-- [Money handling](#money-handling)
-- [Tests](#tests)
-- [Security roadmap](#security-roadmap)
-- [Not built yet](#not-built-yet)
+Live: **https://rndcoin.koppoddo.cloud** · repo: https://github.com/OddoMaxi/bndcoin
 
 ---
 
 ## Architecture
 
+Modular monolith. One API, in-process workers (BullMQ), one Postgres, one Redis,
+Caddy reverse proxy — all in a dedicated Docker Compose project.
+
 ```
-apps/
-  api/   NestJS + Prisma + BullMQ. Clean modular layout:
-         common/*  -> config, prisma, redis (+lock), idempotency, audit, rbac,
-                      rate-limit, queue, errors, health, request context, mock store
-         modules/* -> auth, users, pricing, quotes, transactions (state-machine +
-                      buy-flow orchestrator + BullMQ processors), treasury,
-                      payment-providers, crypto-providers, audit-logs, admin,
-                      mock-control
-  web/   Next.js (App Router) + Tailwind. Ivory / forest green / gold, mobile-first.
-packages/
-  money/         framework-free Decimal money kit (decimal.js). No JS floats.
-  shared-types/  enums + DTO types + the transition table, shared web <-> api
+Client app · Admin cockpit · Scanner PWA
+                  │  REST /api/v1
+          ┌───────┴────────┐
+          │   NestJS API   │  modules:
+          │  (modular      │   auth · users · kyc · pricing · treasury · suppliers
+          │   monolith)    │   crypto · payments · orange · reconciliation
+          └───────┬────────┘   events · organizers · tickets · settlements
+                  │            admin · system   + common: ledger · rbac · queue
+   ┌──────────────┼───────────────┐   · alerts · notifications · idempotency
+Postgres       Redis          Orange gateway (mock | modem)
+(Prisma)     (locks/queues)   Blockchain provider (mock | live)
 ```
 
-Request → `RequestContext` (AsyncLocalStorage: request id / ip) → `JwtAuthGuard` →
-`RolesGuard` → `ThrottlerGuard` → `IdempotencyInterceptor` → controller → service.
-Every money mutation runs inside a Postgres transaction with `SELECT … FOR UPDATE`
-row locks and writes an append-only audit row atomically.
-
-## Tech stack
-
-Monorepo (pnpm workspaces + Turborepo) · Next.js + TypeScript · NestJS + TypeScript
-· PostgreSQL · Prisma · Redis (cache / locks / BullMQ queues) · Docker Compose ·
-REST.
+- **Ledger is the source of financial truth** — every money movement posts a
+  balanced double-entry journal; a per-currency integrity check runs continuously.
+  `TreasuryAccount` bucket balances are a fast cache reconciled against the ledger.
+- **State machines** guard both crypto flows: USDT is never sent before a payment
+  is *reconciled* (`PAYMENT_VERIFIED`), GNF is never paid before crypto reaches
+  the required confirmations. Failures release reservations; ambiguous cases go to
+  `UNDER_REVIEW`.
+- **Reconciliation gate** — a payment is only `PAYMENT_VERIFIED` after correlating
+  order / amount / reference / timing. Never on a single SMS or USSD "success".
+- **Idempotency** everywhere financial: HTTP `Idempotency-Key`, provider-op keys,
+  payout keys, deterministic transition events.
 
 ## Prerequisites
 
-- Node.js 22 (`.nvmrc`)
-- pnpm 9 (`corepack enable`)
-- Docker + Docker Compose
+Node 22, pnpm 9 (`corepack enable`), Docker + Compose.
 
-## Quick start
+## Quick start (local)
 
 ```bash
 cp .env.example .env
 pnpm install
-
-# infra
 docker compose up -d postgres redis
-
-# database
 pnpm --filter @bn/api prisma migrate deploy
-pnpm --filter @bn/api prisma generate
 pnpm --filter @bn/api db:seed
-
-# run everything (api :3001, web :3000)
-pnpm dev
+pnpm dev            # api :3001, web :3000
 ```
 
-Seeded accounts:
+Seeded accounts (password login for ops; customers use phone + OTP):
 
-| Role       | Phone           | Password       |
-|------------|-----------------|----------------|
-| Admin      | `+224600000000` | `Admin123!`    |
-| Treasury   | `+224600000001` | `Treasury123!` |
-| Compliance | `+224600000002` | `Compliance123!` |
-| User       | `+224610000000` | `Test123!`     |
+| Role | Phone | Password |
+|---|---|---|
+| SUPER_ADMIN | `+224600000000` | `Admin123!` |
+| OPERATIONS | `+224600000001` | `Ops123!` |
+| TREASURY | `+224600000002` | `Treasury123!` |
+| COMPLIANCE | `+224600000003` | `Compliance123!` |
+| FINANCE | `+224600000004` | `Finance123!` |
+| EVENT_MANAGER | `+224600000005` | `Events123!` |
+| SCANNER_OPERATOR | `+224600000006` | `Scan123!` |
+| ORGANIZER | `+224611111111` | `Organizer123!` |
+| CUSTOMER | `+224610000000` | `Test123!` (or OTP) |
 
-Seeded treasury: **5,000,000,000 GNF** and **100,000 USDT** available.
-Seeded pricing: market rate **8600 GNF/USDT**, BUY spread **250 bps** → buy rate
-**8815 GNF/USDT**, quote TTL **90 s**.
+In `OTP_MODE=mock` the OTP request response includes `debugCode` so you can log in
+without an SMS.
 
-API docs (non-prod): http://localhost:3001/docs · DB browser: http://localhost:8080
+## The two core flows
 
-### Everything in containers
+**BUY USDT** — `POST /quotes {side:BUY_USDT,gnfAmount}` → `POST /crypto/orders/buy
+{quoteId,networkId,destinationAddress}` → pay by Orange Money → reconciled →
+USDT sent on-chain → confirmations → `COMPLETED`. Simulate with
+`POST /mock/orange/payment/:orderId/event {scenario:PAYMENT_SUCCESS}` then
+`POST /mock/crypto/send/:orderId/event {scenario:CONFIRMED}` (admin token).
 
-```bash
-docker compose up --build
-```
+**SELL USDT** — `POST /quotes {side:SELL_USDT,usdtAmount}` → `POST
+/crypto/orders/sell {quoteId,networkId}` → send USDT to the returned deposit
+address → confirmations → GNF reserved → Orange payout → `COMPLETED`. Simulate
+with `POST /mock/crypto/deposit/:orderId/event {scenario:CONFIRMED}`.
 
-## Running the BUY flow
-
-### In the UI
-
-1. http://localhost:3000 → **Créer un compte** (or log in with the seeded user).
-2. **Acheter** → type a GNF amount → a quote appears with the USDT you receive and
-   a live countdown.
-3. Paste a USDT address (`T…` TRON or `0x…` EVM) → **Confirmer et payer**.
-4. On the tracking page, under **Simulation (démo)** (needs an admin session in the
-   same browser, or use curl below) press **Paiement réussi** → the stepper runs
-   to **COMPLETED**.
-5. Check `/admin/treasury`: USDT `available` fell by the quote amount, GNF
-   `available` rose by the amount paid.
-
-### Headless (curl)
-
-```bash
-API=http://localhost:3001/api/v1
-
-# 1. register
-TOK=$(curl -s $API/auth/register -H 'content-type: application/json' \
-  -d '{"phone":"+224620001122","password":"Passw0rd!","firstName":"A","lastName":"B"}' \
-  | jq -r .accessToken)
-
-# 2. quote
-QUOTE=$(curl -s $API/quotes -H "authorization: Bearer $TOK" \
-  -H 'content-type: application/json' -H 'idempotency-key: q-1' \
-  -d '{"gnfAmount":"1000000"}')
-QID=$(echo "$QUOTE" | jq -r .id); echo "$QUOTE" | jq '{usdtAmount,bnRate,expiresInSeconds}'
-
-# 3. accept -> transaction, WAITING_PAYMENT
-TX=$(curl -s $API/quotes/$QID/accept -H "authorization: Bearer $TOK" \
-  -H 'content-type: application/json' -H 'idempotency-key: a-1' \
-  -d "{\"destinationAddress\":\"T${_:-111111111111111111111111111111111}\"}")
-TID=$(echo "$TX" | jq -r .id)
-
-# 4. admin session
-ADM=$(curl -s $API/auth/login -H 'content-type: application/json' \
-  -d '{"phone":"+224600000000","password":"Admin123!"}' | jq -r .accessToken)
-
-# 5. simulate a successful payment -> drives to COMPLETED
-curl -s $API/mock/payment/$TID/event -H "authorization: Bearer $ADM" \
-  -H 'content-type: application/json' -d '{"scenario":"PAYMENT_SUCCESS"}' | jq .status
-```
-
-### Mock scenarios
-
-`POST /mock/payment/:txId/event` — `PAYMENT_SUCCESS`, `PAYMENT_FAILED`, `DELAYED`,
-`TIMEOUT`, `INSUFFICIENT_BALANCE`.
-`POST /mock/crypto/:txId/event` — `SENT`, `CONFIRMED`, `FAILED`.
-
-These endpoints 404 unless `MOCK_PROVIDERS_ENABLED=true` and require the `ADMIN` role.
-
-## Transaction state machine
-
-```
-CREATED ─▶ QUOTE_LOCKED ─▶ WAITING_PAYMENT ─▶ PAYMENT_DETECTED ─▶ PAYMENT_CONFIRMED
-                                                                        │
-                                        USDT_PROCESSING ◀───────────────┘
-                                                │
-                                          USDT_SENT ─▶ COMPLETED
-```
-
-| From | Allowed to |
-|---|---|
-| CREATED | QUOTE_LOCKED, CANCELLED, EXPIRED |
-| QUOTE_LOCKED | WAITING_PAYMENT, CANCELLED, EXPIRED |
-| WAITING_PAYMENT | PAYMENT_DETECTED, CANCELLED, EXPIRED, FAILED, MANUAL_REVIEW |
-| PAYMENT_DETECTED | PAYMENT_CONFIRMED, FAILED, MANUAL_REVIEW |
-| PAYMENT_CONFIRMED | USDT_PROCESSING, FAILED, MANUAL_REVIEW |
-| USDT_PROCESSING | USDT_SENT, FAILED, MANUAL_REVIEW |
-| USDT_SENT | COMPLETED, MANUAL_REVIEW |
-| MANUAL_REVIEW | USDT_PROCESSING, PAYMENT_CONFIRMED, COMPLETED, FAILED, CANCELLED |
-| COMPLETED / FAILED / EXPIRED / CANCELLED | *(terminal)* |
-
-- `TransactionStateMachine.apply()` is the **only** writer of `Transaction.status`.
-  It locks the row, validates the move against the table above, runs an optional
-  in-transaction side effect (treasury moves), then writes the new status + an
-  append-only `TransactionEvent` + an `AuditLog`.
-- **Idempotent**: `(transactionId, event, nextStatus)` is unique; a replayed event
-  is a no-op.
-- On `FAILED` / `EXPIRED` / `CANCELLED` all `HELD` reservations are released. When
-  GNF has already been received the flow routes to `MANUAL_REVIEW` (refund owed)
-  rather than auto-failing.
-
-### Treasury movements for a BUY
-
-| Step | Effect |
-|---|---|
-| accept (`QUOTE_LOCKED`) | reserve **USDT** = `usdtAmount` (available → reserved) — prevents overselling |
-| `PAYMENT_CONFIRMED` | credit **GNF** available (client's francs received) |
-| `COMPLETED` | consume the USDT reservation (reserved → out of treasury) |
-| `FAILED` / `EXPIRED` / `CANCELLED` (pre-payment) | release the USDT reservation |
-
-## Provider abstraction
-
-```ts
-interface PaymentProvider {
-  collect(req): Promise<CollectResult>;
-  payout(req): Promise<PayoutResult>;            // stub, for refunds / SELL later
-  checkTransaction(providerRef): Promise<CheckTransactionResult>;
-  getBalance(currency): Promise<{ available: string }>;
-}
-
-interface CryptoProvider {
-  sendUSDT(req): Promise<SendUsdtResult>;
-  getTransaction(txHash): Promise<CryptoTransactionResult>;
-  getBalance(): Promise<{ available: string }>;
-  validateAddress(address): boolean;
-}
-```
-
-Concrete provider is chosen by `PAYMENT_PROVIDER` / `CRYPTO_PROVIDER` env
-(only `mock` is wired). `MockOrangeMoneyProvider` and `MockCryptoProvider` read the
-per-transaction scenario an admin pushes through `/mock/*`. Every outbound call is
-wrapped in a `ProviderOperation` row keyed by `${transactionId}:${operation}` so
-retries never double-collect or double-send.
-
-## Money handling
-
-- **No JavaScript floating point anywhere.** `packages/money` wraps `decimal.js`;
-  it refuses to build a `Money` from a non-integer JS `number`.
-- Postgres `DECIMAL(38,18)`, Prisma `Decimal`. Amounts are quantised to the asset
-  scale (GNF 0 dp, USDT 6 dp) before persisting; USDT owed to a client is always
-  rounded **down**.
-- Money crosses the API as canonical decimal **strings**, never numbers.
+**Event ticket** — `POST /event-orders {eventId,items,currency}` → pay (Orange
+for GNF) → tickets issued with signed QR → `POST /scanner/scan
+{eventId,gate,qrToken}` at the gate (first valid scan wins; a second scan returns
+`ALREADY_USED`).
 
 ## Tests
 
 ```bash
-# unit — pure domain logic, no infra
-pnpm --filter @bn/money test
-pnpm --filter @bn/api test          # state machine, transitions
-
-# e2e — full simulated BUY flow + failure paths (needs the test infra)
-docker compose -f docker-compose.test.yml up -d
-pnpm --filter @bn/api test:e2e
-docker compose -f docker-compose.test.yml down -v
+docker compose -f docker-compose.test.yml up -d      # pg :5433, redis :6380
+pnpm --filter @bn/api test        # 25 unit: pricing math, WAC + FIFO COGS,
+                                  # ledger balance, QR signing, state machines
+pnpm --filter @bn/api test:e2e    # 10 integration: full BUY, full SELL,
+                                  # payment failure, deposit mismatch, insufficient
+                                  # liquidity, oversell, double-scan, idempotency,
+                                  # ledger integrity
 ```
 
-E2E coverage: happy path to `COMPLETED` with treasury assertions and the full
-event timeline; `PAYMENT_FAILED → FAILED`, `TIMEOUT → EXPIRED`, insufficient
-liquidity → `409`, crypto `FAILED → MANUAL_REVIEW` → admin retry → `COMPLETED`,
-expired-quote accept → `410`, idempotency-key replay, and a concurrency test
-proving two simultaneous accepts cannot oversell the USDT float.
+## Deploy
 
-## Deploy (single VPS, Docker)
-
-`deploy/` contains a production stack: Postgres, Redis, the API, the web app, and
-a **Caddy** reverse proxy that terminates TLS (Let's Encrypt) and routes
-`/api/*` → API, everything else → web, all on one domain.
+`deploy/` holds the production stack (Postgres, Redis, api, web, Caddy auto-TLS,
+single domain, `/api/*` → API). See `deploy/.env.prod.example`.
 
 ```bash
-# on the server, with Docker + Compose installed and DNS pointing at it
 git clone https://github.com/OddoMaxi/bndcoin.git /opt/bndcoin
-cd /opt/bndcoin/deploy
-cp .env.prod.example .env         # set PUBLIC_URL, POSTGRES_PASSWORD, JWT secrets
-#   edit ../deploy/Caddyfile if the domain differs
+cd /opt/bndcoin/deploy && cp .env.prod.example .env   # set PUBLIC_URL + secrets
 docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml exec api pnpm --filter @bn/api db:seed
+docker compose -f docker-compose.prod.yml exec api sh -c "cd apps/api && pnpm exec prisma db seed"
 ```
 
-`NEXT_PUBLIC_API_URL` is baked into the web image at build time from
-`PUBLIC_URL`; change it → `up -d --build web`. `MOCK_PROVIDERS_ENABLED=true` is
-kept on so the BUY flow is demoable (only mock providers exist in this iteration).
+Migrations apply automatically on API start. Keep `REAL_MONEY_MODE=false`,
+`REAL_CRYPTO_MODE=false`, `ORANGE_MODE=mock` until credentials/hardware are ready.
 
-## Security roadmap
+## Security posture
 
-**Implemented now** — RBAC guard + role enum, JWT access + rotating refresh
-tokens (hashed at rest), argon2 passwords, `Idempotency-Key` enforcement with
-stored-response replay, per-route rate limiting, append-only audit log written in
-the same transaction as each change, server-side state-machine validation,
-DB-level oversell protection.
+Implemented: phone-OTP + rotating JWT + session revocation, argon2 for the
+optional ops passwords, granular RBAC, `Idempotency-Key` enforcement with stored
+replay, per-route rate limiting, append-only audit log written in-transaction,
+server-side state-machine validation, DB-level oversell protection, signed QR
+(HMAC, no raw ids), reconciliation-before-settlement, confirmations-before-payout,
+double-entry ledger with integrity checks, secret management via env, address
+validation per network.
 
-**Scaffolded (schema only)** — `KycProfile`, `TransactionLimit` (enforced for
-per-transaction GNF min/max at quote time), `AmlFlag`, KYC levels on `User`.
-
-**Deliberately deferred** — OTP delivery, real KYC/AML provider calls, daily /
-monthly velocity limits enforcement, device fingerprinting, refund payout
-execution (the state machine supports the path; execution is out of scope).
-
-Rate-limit storage is in-memory in this iteration (single instance); swap to a
-Redis-backed `ThrottlerStorage` before running more than one API replica.
-
-## Not built yet
-
-SELL flow · events / notifications · affiliate program · real Orange Money /
-Binance / on-chain integrations · hardware integrations.
+Scaffolded / deferred to a later iteration: real KYC/AML provider calls and
+document storage, daily/monthly velocity-limit *enforcement* (per-tx + daily are
+enforced), 2FA for admin console, hardware-backed wallet signing, refund-payout
+execution, real SMS/email/push, physical modem serial driver, `www` subdomain.
