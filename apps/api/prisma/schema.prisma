@@ -674,16 +674,19 @@ model SupplierPurchase {
   lot InventoryLot?
 }
 
-/// One lot per confirmed supplier purchase, consumed FIFO for realized COGS.
+/// USDT inventory lot, consumed FIFO for realized COGS. Created from a confirmed
+/// supplier purchase or from a completed SELL order (USDT acquired from a user).
 model InventoryLot {
-  id            String           @id @default(uuid())
-  purchaseId    String           @unique
-  purchase      SupplierPurchase @relation(fields: [purchaseId], references: [id])
-  asset         Asset            @default(USDT)
-  quantity      Decimal          @db.Decimal(38, 18)
-  quantityRemaining Decimal      @db.Decimal(38, 18)
-  unitCostGnf   Decimal          @db.Decimal(38, 18)
-  createdAt     DateTime         @default(now())
+  id                String            @id @default(uuid())
+  sourceType        String            @default("SUPPLIER_PURCHASE") // SUPPLIER_PURCHASE | SELL_ORDER
+  sourceRef         String
+  purchaseId        String?           @unique
+  purchase          SupplierPurchase? @relation(fields: [purchaseId], references: [id])
+  asset             Asset             @default(USDT)
+  quantity          Decimal           @db.Decimal(38, 18)
+  quantityRemaining Decimal           @db.Decimal(38, 18)
+  unitCostGnf       Decimal           @db.Decimal(38, 18)
+  createdAt         DateTime          @default(now())
 
   @@index([asset, quantityRemaining])
 }

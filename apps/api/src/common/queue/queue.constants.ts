@@ -1,21 +1,29 @@
 export const QUEUE = {
-  BUY_FLOW: 'buy-flow',
-  QUOTES: 'quotes',
+  CRYPTO: 'crypto',
+  PAYMENTS: 'payments',
+  ORANGE: 'orange',
+  BLOCKCHAIN: 'blockchain',
+  EVENTS: 'events',
+  MAINTENANCE: 'maintenance',
 } as const;
 
-export const BUY_FLOW_JOB = {
-  PAYMENT_TIMEOUT: 'payment-timeout',
-  CONFIRM_USDT: 'confirm-usdt',
+export const JOB = {
+  // crypto
+  BUY_START_PAYMENT: 'buy:start-payment',
+  BUY_PAYMENT_TIMEOUT: 'buy:payment-timeout',
+  SELL_WATCH_DEPOSIT: 'sell:watch-deposit',
+  SELL_DEPOSIT_TIMEOUT: 'sell:deposit-timeout',
+  WITHDRAWAL_CONFIRM: 'crypto:withdrawal-confirm',
+  // payments
+  PAYMENT_POLL: 'payment:poll',
+  PAYOUT_PROCESS: 'payout:process',
+  PAYOUT_CONFIRM: 'payout:confirm',
+  // blockchain
+  BLOCKCHAIN_SCAN: 'blockchain:scan',
+  // maintenance
+  QUOTE_SWEEP: 'maintenance:quote-sweep',
+  ORDER_SWEEP: 'maintenance:order-sweep',
+  TREASURY_RECONCILE: 'maintenance:treasury-reconcile',
+  ALERT_SCAN: 'maintenance:alert-scan',
+  MODEM_HEALTHCHECK: 'orange:modem-healthcheck',
 } as const;
-
-export const QUOTES_JOB = {
-  SWEEP_EXPIRED: 'sweep-expired',
-} as const;
-
-export interface PaymentTimeoutJob {
-  transactionId: string;
-}
-export interface ConfirmUsdtJob {
-  transactionId: string;
-  attempt: number;
-}

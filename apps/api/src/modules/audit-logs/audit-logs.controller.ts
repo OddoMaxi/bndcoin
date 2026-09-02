@@ -1,7 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsOptional, IsString } from 'class-validator';
-import { Roles } from '../../common/rbac/decorators';
+import { RequirePermission } from '../../common/rbac/decorators';
 import { PaginationQuery, paginated } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
@@ -12,8 +12,8 @@ class AuditQuery extends PaginationQuery {
   @IsOptional() @IsString() action?: string;
 }
 
-@ApiTags('admin/audit-logs')
-@Roles('ADMIN', 'COMPLIANCE')
+@ApiTags('audit-logs')
+@RequirePermission('audit.read')
 @Controller('admin/audit-logs')
 export class AuditLogsController {
   constructor(private readonly prisma: PrismaService) {}
@@ -43,9 +43,11 @@ export class AuditLogsController {
         entityId: a.entityId,
         actorType: a.actorType,
         actorId: a.actorId,
+        actorRole: a.actorRole,
         before: a.before,
         after: a.after,
         requestId: a.requestId,
+        ip: a.ip,
         createdAt: a.createdAt.toISOString(),
       })),
       total,

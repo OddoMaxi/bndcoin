@@ -7,8 +7,8 @@ import { CHART_OF_ACCOUNTS } from './accounts';
 
 export interface JournalLine {
   account: string; // account code
-  currency: Asset;
-  direction: LedgerDirection;
+  currency: string; // Asset
+  direction: string; // LedgerDirection
   amount: string;
 }
 
@@ -30,7 +30,6 @@ export class UnbalancedJournalError extends DomainError {
 @Injectable()
 export class LedgerService {
   private readonly logger = new Logger(LedgerService.name);
-  private accountIdCache = new Map<string, string>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -42,15 +41,11 @@ export class LedgerService {
         create: a,
       });
     }
-    this.accountIdCache.clear();
   }
 
   private async accountId(tx: Tx, code: string): Promise<string> {
-    const cached = this.accountIdCache.get(code);
-    if (cached) return cached;
-    const acc = await tx.ledgerAccount.findUnique({ where: { code } });
+    const acc = await tx.ledgerAccount.findUnique({ where: { code }, select: { id: true } });
     if (!acc) throw new DomainError('UNKNOWN_ACCOUNT', `Ledger account ${code} does not exist`, 500);
-    this.accountIdCache.set(code, acc.id);
     return acc.id;
   }
 
@@ -66,14 +61,15 @@ export class LedgerService {
 
     const byCurrency = new Map<Asset, { debit: Money; credit: Money }>();
     for (const line of input.lines) {
-      const bucket = byCurrency.get(line.currency) ?? {
-        debit: Money.zero(line.currency),
-        credit: Money.zero(line.currency),
+      const currency = line.currency as Asset;
+      const bucket = byCurrency.get(currency) ?? {
+        debit: Money.zero(currency),
+        credit: Money.zero(currency),
       };
-      const amt = Money.of(line.amount, line.currency).assertPositive('journal line amount');
+      const amt = Money.of(line.amount, currency).assertPositive('journal line amount');
       if (line.direction === 'DEBIT') bucket.debit = bucket.debit.add(amt);
       else bucket.credit = bucket.credit.add(amt);
-      byCurrency.set(line.currency, bucket);
+      byCurrency.set(currency, bucket);
     }
     for (const [currency, { debit, credit }] of byCurrency) {
       if (!debit.eq(credit)) {
@@ -98,9 +94,9 @@ export class LedgerService {
         data: {
           journalId: journal.id,
           accountId: await this.accountId(tx, line.account),
-          currency: line.currency,
-          direction: line.direction,
-          amount: Money.of(line.amount, line.currency).toString(),
+          currency: line.currency as Asset,
+          direction: line.direction as LedgerDirection,
+          amount: Money.of(line.amount, line.currency as Asset).toString(),
         },
       });
     }

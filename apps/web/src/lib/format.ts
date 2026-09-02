@@ -1,40 +1,21 @@
-/**
- * Formatting only. The API sends money as canonical decimal strings; we never
- * do arithmetic on them here, only presentation.
- */
+const gnf = new Intl.NumberFormat('fr-GN', { maximumFractionDigits: 0 });
+const usdt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 
-const gnfFmt = new Intl.NumberFormat('fr-GN', { maximumFractionDigits: 0 });
-const usdtFmt = new Intl.NumberFormat('en-US', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 6,
-});
-
-export function formatGNF(value: string | number): string {
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n)) return `${value}`;
-  return `${gnfFmt.format(n)} GNF`;
-}
-
-export function formatUSDT(value: string | number): string {
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n)) return `${value}`;
-  return `${usdtFmt.format(n)} USDT`;
-}
-
-export function formatRate(value: string): string {
-  const n = Number(value);
-  return Number.isFinite(n) ? `${gnfFmt.format(Math.round(n))} GNF / USDT` : value;
-}
-
-export function formatDateTime(iso: string | null): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-export function humanStatus(status: string): string {
-  return status
-    .toLowerCase()
-    .split('_')
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(' ');
-}
+export const fmtGNF = (v: string | number) => {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? `${gnf.format(n)} GNF` : `${v}`;
+};
+export const fmtUSDT = (v: string | number) => {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? `${usdt.format(n)} USDT` : `${v}`;
+};
+export const fmtRate = (v: string) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? `${gnf.format(Math.round(n))} GNF/USDT` : v;
+};
+export const fmtDate = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+export const fmtDay = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+export const human = (s: string) =>
+  s.toLowerCase().split('_').map((w) => w[0]?.toUpperCase() + w.slice(1)).join(' ');

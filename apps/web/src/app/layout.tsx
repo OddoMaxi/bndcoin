@@ -4,8 +4,9 @@ import { AuthProvider } from '@/lib/auth';
 import { AppShell } from '@/components/AppShell';
 
 export const metadata: Metadata = {
-  title: 'Bory & Norbert — Acheter de l’USDT',
-  description: 'Achetez et vendez de l’USDT en francs guinéens, simplement.',
+  title: 'Bory & Norbert',
+  description: 'Achetez et vendez de l’USDT, achetez vos billets d’événements — en francs guinéens.',
+  manifest: '/manifest.webmanifest',
 };
 
 export const viewport: Viewport = {

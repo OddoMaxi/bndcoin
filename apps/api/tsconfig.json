@@ -10,7 +10,7 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "baseUrl": "./",
-    "incremental": true,
+    "incremental": false,
     "strictPropertyInitialization": false,
     "paths": {
       "@app/*": ["src/*"]

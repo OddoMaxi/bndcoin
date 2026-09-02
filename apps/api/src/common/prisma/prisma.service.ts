@@ -21,9 +21,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   /**
-   * Interactive transaction wrapper. Defaults to ReadCommitted so that the
-   * explicit `SELECT ... FOR UPDATE` row locks used by the treasury / state
-   * machine produce deterministic blocking (rather than serialization retries).
+   * Interactive transaction. ReadCommitted + explicit `SELECT ... FOR UPDATE`
+   * row locks give deterministic pessimistic blocking for money-critical paths.
    */
   runInTransaction<T>(
     fn: (tx: Tx) => Promise<T>,
@@ -31,28 +30,26 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   ): Promise<T> {
     return this.$transaction(fn, {
       isolationLevel: opts?.isolationLevel ?? Prisma.TransactionIsolationLevel.ReadCommitted,
-      timeout: opts?.timeoutMs ?? 15_000,
+      timeout: opts?.timeoutMs ?? 20_000,
     });
   }
 
-  /** Pessimistically lock a Transaction row for the life of `tx`. Returns its status. */
-  async lockTransaction(tx: Tx, id: string): Promise<{ id: string; status: string } | null> {
-    const rows = await tx.$queryRaw<Array<{ id: string; status: string }>>(
-      Prisma.sql`SELECT "id", "status"::text AS "status" FROM "Transaction" WHERE "id" = ${id} FOR UPDATE`,
-    );
-    return rows[0] ?? null;
+  /** Lock an arbitrary row by id for the life of `tx`. Table name is a trusted constant. */
+  async lockRow(tx: Tx, table: string, id: string): Promise<void> {
+    await tx.$executeRawUnsafe(`SELECT 1 FROM "${table}" WHERE "id" = $1 FOR UPDATE`, id);
   }
 
-  /** Pessimistically lock a TreasuryAccount row by asset. */
-  async lockTreasuryAccount(
+  /** Lock a TreasuryAccount by (asset, bucket) and return its numeric fields as strings. */
+  async lockTreasury(
     tx: Tx,
     asset: 'GNF' | 'USDT',
-  ): Promise<{ id: string; asset: string; available: string; reserved: string; version: number } | null> {
+    bucket: string,
+  ): Promise<{ id: string; available: string; reserved: string; version: number } | null> {
     const rows = await tx.$queryRaw<
-      Array<{ id: string; asset: string; available: string; reserved: string; version: number }>
+      Array<{ id: string; available: string; reserved: string; version: number }>
     >(
-      Prisma.sql`SELECT "id", "asset"::text AS "asset", "available"::text AS "available", "reserved"::text AS "reserved", "version"
-                 FROM "TreasuryAccount" WHERE "asset" = ${asset}::"Asset" FOR UPDATE`,
+      Prisma.sql`SELECT "id", "available"::text AS "available", "reserved"::text AS "reserved", "version"
+                 FROM "TreasuryAccount" WHERE "asset" = ${asset}::"Asset" AND "bucket" = ${bucket} FOR UPDATE`,
     );
     return rows[0] ?? null;
   }
