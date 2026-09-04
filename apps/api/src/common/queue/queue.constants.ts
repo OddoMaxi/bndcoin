@@ -23,6 +23,7 @@ export const JOB = {
   // maintenance
   QUOTE_SWEEP: 'maintenance:quote-sweep',
   ORDER_SWEEP: 'maintenance:order-sweep',
+  CRYPTO_WATCH_SWEEP: 'maintenance:crypto-watch-sweep',
   TREASURY_RECONCILE: 'maintenance:treasury-reconcile',
   ALERT_SCAN: 'maintenance:alert-scan',
   MODEM_HEALTHCHECK: 'orange:modem-healthcheck',

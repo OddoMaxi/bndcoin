@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
-import { NotFoundError, ValidationError } from '../../common/errors/domain-errors';
+import { ValidationError } from '../../common/errors/domain-errors';
 import { BLOCKCHAIN_PROVIDER, BlockchainProvider } from './blockchain.provider';
 
 @Injectable()

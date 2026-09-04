@@ -209,18 +209,7 @@ export class CryptoService {
         await this.apply(orderId, {
           event: 'payment-verified',
           toStatus: 'PAYMENT_VERIFIED',
-          mutate: async (tx, cur) => {
-            // GNF received into a PDV bucket.
-            await this.treasury.creditAvailable(tx, {
-              asset: 'GNF',
-              bucket: 'PDV_01',
-              amount: decimalToString(cur.gnfAmount),
-              refType: 'crypto_order',
-              refId: cur.id,
-              memo: `buy payment ${cur.publicId}`,
-            });
-            return {};
-          },
+          mutate: (tx, cur) => this.creditBuyPaymentIfNeeded(tx, cur),
         });
       } else if (status === 'PAYMENT_REJECTED' || status === 'EXPIRED') {
         await this.failBuy(orderId, `Payment ${status.toLowerCase()}`);
@@ -242,26 +231,57 @@ export class CryptoService {
     if (cur.status === 'USDT_PROCESSING') {
       const net = await this.prisma.cryptoNetwork.findUniqueOrThrow({ where: { id: cur.networkId! } });
       const idemKey = `${orderId}:send`;
-      const send = await this.chain.sendUsdt(net.key, cur.destinationAddress!, decimalToString(cur.usdtAmount), idemKey);
-      if (!send.broadcast) {
-        await this.apply(orderId, { event: 'usdt-send-review', toStatus: 'UNDER_REVIEW', reason: 'USDT broadcast failed', mutate: () => ({ reviewReason: 'USDT broadcast failed' }) });
-        await this.alerts.raise('HIGH', 'PAYOUT_STUCK', `USDT send failed for ${cur.publicId}`);
-        return this.entity(orderId);
-      }
-      await this.prisma.cryptoWithdrawal.create({
-        data: {
-          orderId,
-          networkId: net.id,
-          asset: 'USDT',
-          toAddress: cur.destinationAddress!,
-          amount: decimalToString(cur.usdtAmount),
-          txHash: send.txHash,
-          status: 'BROADCAST',
-          idempotencyKey: idemKey,
-          broadcastAt: new Date(),
-        },
+
+      // Idempotency guard: never call sendUsdt twice for the same order. A prior
+      // non-failed attempt is reused as-is; a prior failed attempt is retried.
+      let wd = await this.prisma.cryptoWithdrawal.findFirst({
+        where: { orderId, status: { not: 'FAILED' } },
+        orderBy: { createdAt: 'desc' },
       });
-      await this.apply(orderId, { event: 'usdt-sent', toStatus: 'USDT_SENT', metadata: { txHash: send.txHash }, mutate: () => ({}) });
+
+      if (!wd) {
+        const send = await this.chain.sendUsdt(net.key, cur.destinationAddress!, decimalToString(cur.usdtAmount), idemKey);
+        if (!send.broadcast) {
+          await this.prisma.cryptoWithdrawal.create({
+            data: {
+              orderId,
+              networkId: net.id,
+              asset: 'USDT',
+              toAddress: cur.destinationAddress!,
+              amount: decimalToString(cur.usdtAmount),
+              status: 'FAILED',
+              idempotencyKey: `${idemKey}:failed:${Date.now()}`,
+            },
+          });
+          await this.apply(orderId, { event: 'usdt-send-review', toStatus: 'UNDER_REVIEW', reason: 'USDT broadcast failed', mutate: () => ({ reviewReason: 'USDT broadcast failed' }) });
+          await this.alerts.raise('HIGH', 'PAYOUT_STUCK', `USDT send failed for ${cur.publicId}`);
+          return this.entity(orderId);
+        }
+        try {
+          wd = await this.prisma.cryptoWithdrawal.create({
+            data: {
+              orderId,
+              networkId: net.id,
+              asset: 'USDT',
+              toAddress: cur.destinationAddress!,
+              amount: decimalToString(cur.usdtAmount),
+              txHash: send.txHash,
+              status: 'BROADCAST',
+              idempotencyKey: idemKey,
+              broadcastAt: new Date(),
+            },
+          });
+        } catch (err) {
+          // Lost a race against a concurrent driveBuy — the withdrawal already exists.
+          if ((err as { code?: string }).code === 'P2002') {
+            wd = await this.prisma.cryptoWithdrawal.findUniqueOrThrow({ where: { idempotencyKey: idemKey } });
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      await this.apply(orderId, { event: 'usdt-sent', toStatus: 'USDT_SENT', metadata: { txHash: wd.txHash ?? undefined }, mutate: () => ({}) });
       await this.queue.add(JOB.WITHDRAWAL_CONFIRM, { orderId, attempt: 1 }, { jobId: `wd-${orderId}-1`, delay: 2000 });
       cur = await this.entity(orderId);
     }
@@ -287,7 +307,25 @@ export class CryptoService {
     return this.entity(orderId);
   }
 
-  private async completeBuy(orderId: string, txHash: string, confirmations: number) {
+  /** Credits the GNF PDV bucket for a BUY order — but only once, however the
+   * order reaches PAYMENT_VERIFIED (normal flow or an admin RETRY resume). */
+  private async creditBuyPaymentIfNeeded(tx: Tx, cur: CryptoOrder): Promise<Prisma.CryptoOrderUpdateInput> {
+    const memo = `buy payment ${cur.publicId}`;
+    const already = await tx.treasuryMovement.findFirst({ where: { refType: 'crypto_order', refId: cur.id, memo } });
+    if (!already) {
+      await this.treasury.creditAvailable(tx, {
+        asset: 'GNF',
+        bucket: 'PDV_01',
+        amount: decimalToString(cur.gnfAmount),
+        refType: 'crypto_order',
+        refId: cur.id,
+        memo,
+      });
+    }
+    return {};
+  }
+
+  private async completeBuy(orderId: string, _txHash: string, _confirmations: number) {
     await this.apply(orderId, {
       event: 'completed',
       toStatus: 'COMPLETED',
@@ -534,22 +572,19 @@ export class CryptoService {
     }
 
     if (cur.status === 'CRYPTO_CONFIRMED') {
-      await this.apply(orderId, {
-        event: 'reserve-gnf',
-        toStatus: 'GNF_RESERVED',
-        mutate: async (tx, c) => {
-          await this.treasury.reserve(tx, {
-            asset: 'GNF',
-            bucket: 'PDV_01',
-            amount: decimalToString(c.gnfAmount),
-            refType: 'crypto_order',
-            refId: c.id,
-            reason: `sell payout ${c.publicId}`,
-          });
-          return {};
-        },
-      });
-      cur = await this.entity(orderId);
+      try {
+        await this.apply(orderId, {
+          event: 'reserve-gnf',
+          toStatus: 'GNF_RESERVED',
+          mutate: (tx, c) => this.reserveSellGnfIfNeeded(tx, c),
+        });
+        cur = await this.entity(orderId);
+      } catch (err) {
+        // Most likely InsufficientLiquidityError — this needs a human (top up
+        // GNF float or wait), not an infinite retry loop.
+        await this.flagForReview(orderId, `Could not reserve GNF payout: ${(err as Error).message}`);
+        return this.entity(orderId);
+      }
     }
 
     if (cur.status === 'GNF_RESERVED') {
@@ -580,6 +615,24 @@ export class CryptoService {
       }
     }
     return this.entity(orderId);
+  }
+
+  /** Reserves the SELL payout's GNF — but only once, however GNF_RESERVED is reached. */
+  private async reserveSellGnfIfNeeded(tx: Tx, cur: CryptoOrder): Promise<Prisma.CryptoOrderUpdateInput> {
+    const existing = await tx.liquidityReservation.findFirst({
+      where: { refType: 'crypto_order', refId: cur.id, asset: 'GNF' },
+    });
+    if (!existing) {
+      await this.treasury.reserve(tx, {
+        asset: 'GNF',
+        bucket: 'PDV_01',
+        amount: decimalToString(cur.gnfAmount),
+        refType: 'crypto_order',
+        refId: cur.id,
+        reason: `sell payout ${cur.publicId}`,
+      });
+    }
+    return {};
   }
 
   private async quotePublicId(quoteId: string | null): Promise<string> {
@@ -621,7 +674,16 @@ export class CryptoService {
   }
 
   // ---- admin transition / review ----
-  async adminTransition(actorId: string, orderId: string, toStatus: CryptoOrderStatus, reason: string) {
+
+  /**
+   * Free-form admin transition. Deliberately restricted to targets that are
+   * always safe to apply blind (they only release reservations or flag for
+   * review). Reaching COMPLETED must go through `resolveReview()`, which
+   * replays the same ledger-posting completion path as the normal flow — a
+   * raw status flip to COMPLETED would silently skip revenue/COGS booking and
+   * leave the USDT/GNF reservation stuck HELD forever.
+   */
+  async adminTransition(actorId: string, orderId: string, toStatus: 'FAILED' | 'CANCELLED' | 'UNDER_REVIEW', reason: string) {
     await this.apply(orderId, {
       event: `admin:${toStatus}`,
       toStatus,
@@ -629,20 +691,159 @@ export class CryptoService {
       actorId,
       reason,
       mutate: async (tx) => {
-        if (['FAILED', 'CANCELLED', 'REFUNDED'].includes(toStatus)) {
+        if (toStatus === 'FAILED' || toStatus === 'CANCELLED') {
           const held = await tx.liquidityReservation.findMany({
             where: { refType: 'crypto_order', refId: orderId, status: 'HELD' },
           });
           for (const h of held) await this.treasury.releaseReservation(tx, h.id, `admin ${toStatus}`);
           return { failureReason: reason };
         }
-        return {};
+        return { reviewReason: reason };
       },
     });
+    return this.getOrderDto(orderId, undefined, true);
+  }
+
+  async flagForReview(orderId: string, reason: string): Promise<void> {
+    await this.apply(orderId, {
+      event: 'flagged-for-review',
+      toStatus: 'UNDER_REVIEW',
+      reason,
+      mutate: () => ({ reviewReason: reason }),
+    });
+    await this.alerts.raise('HIGH', 'RECONCILIATION_REQUIRED', `Order needs manual review: ${reason}`, { orderId });
+  }
+
+  /**
+   * Structured resolution of an UNDER_REVIEW order.
+   *  - RETRY           re-drives the order from where it left off.
+   *  - FORCE_COMPLETE   only allowed when delivery already happened (USDT
+   *                     broadcast for BUY, payout PAID for SELL) — replays the
+   *                     real completion path so the ledger stays correct.
+   *  - FAIL / CANCEL    releases any held reservation; admin acknowledges the
+   *                     money situation is handled outside the system.
+   */
+  async resolveReview(
+    actorId: string,
+    orderId: string,
+    decision: 'RETRY' | 'FORCE_COMPLETE' | 'FAIL' | 'CANCEL',
+    reason: string,
+  ) {
     const order = await this.entity(orderId);
-    if (order.status === 'PAYMENT_VERIFIED' || order.status === 'USDT_PROCESSING') await this.driveBuy(orderId);
-    if (['GNF_RESERVED', 'PAYOUT_PENDING'].includes(order.status)) await this.driveSell(orderId);
-    return this.getOrderDto(orderId);
+    if (order.status !== 'UNDER_REVIEW') {
+      throw new ValidationError('Only an order in UNDER_REVIEW can be resolved here');
+    }
+
+    switch (decision) {
+      case 'RETRY': {
+        if (order.side === 'BUY_USDT') {
+          // Payment must be resolved first (via Payments/Reconciliation) before
+          // we resume — re-poll it once as a convenience.
+          if (order.paymentIntentId) {
+            const polled = await this.payments.pollIntent(order.paymentIntentId);
+            if (!['PAYMENT_VERIFIED'].includes(polled) && (await this.entity(orderId)).status === 'UNDER_REVIEW') {
+              throw new ValidationError(`Payment is not verified yet (rail status: ${polled}). Resolve it in Payments/Reconciliation, then retry.`);
+            }
+          }
+          await this.apply(orderId, {
+            event: `admin:retry:${Date.now()}`,
+            toStatus: 'PAYMENT_VERIFIED',
+            actorType: 'ADMIN',
+            actorId,
+            reason,
+            mutate: (tx, cur) => this.creditBuyPaymentIfNeeded(tx, cur),
+          });
+          await this.driveBuy(orderId);
+        } else {
+          // Only safe to resume once the crypto side genuinely confirmed at the
+          // quoted amount (the deposit-mismatch case needs manual verification).
+          const confirmed = await this.prisma.cryptoOrderEvent.findFirst({
+            where: { orderId, event: 'crypto-confirmed', nextStatus: 'CRYPTO_CONFIRMED' },
+          });
+          if (!confirmed) {
+            throw new ValidationError(
+              'The USDT deposit was never confirmed at the quoted amount. Verify the on-chain transaction manually; if nothing arrived, use FAIL/CANCEL instead of RETRY.',
+            );
+          }
+          const payout = order.payoutId ? await this.prisma.payout.findUnique({ where: { id: order.payoutId } }) : null;
+          if (payout) {
+            await this.apply(orderId, { event: `admin:retry:${Date.now()}`, toStatus: 'PAYOUT_PENDING', actorType: 'ADMIN', actorId, reason });
+          } else {
+            await this.apply(orderId, {
+              event: `admin:retry:${Date.now()}`,
+              toStatus: 'GNF_RESERVED',
+              actorType: 'ADMIN',
+              actorId,
+              reason,
+              mutate: (tx, cur) => this.reserveSellGnfIfNeeded(tx, cur),
+            });
+          }
+          await this.driveSell(orderId);
+        }
+        break;
+      }
+      case 'FORCE_COMPLETE': {
+        if (order.side === 'BUY_USDT') {
+          const wd = await this.prisma.cryptoWithdrawal.findFirst({ where: { orderId, status: { not: 'FAILED' }, txHash: { not: null } } });
+          if (!wd?.txHash) {
+            throw new ValidationError('Cannot force-complete: USDT was never sent for this order. Use RETRY once the underlying issue is fixed.');
+          }
+          // UNDER_REVIEW -> COMPLETED is a legal transition directly; completeBuy
+          // does the real ledger posting (COGS/margin/fee + reservation consumption).
+          await this.completeBuy(orderId, wd.txHash, this.config.flow.requiredConfirmations);
+        } else {
+          const payout = order.payoutId ? await this.prisma.payout.findUnique({ where: { id: order.payoutId } }) : null;
+          if (!payout || payout.status !== 'PAID') {
+            throw new ValidationError('Cannot force-complete: the GNF payout was never confirmed PAID for this order. Use RETRY instead.');
+          }
+          // UNDER_REVIEW -> COMPLETED is a legal transition directly; completeSell
+          // does the real ledger posting (GNF leg + reservation consumption).
+          await this.completeSell(orderId);
+        }
+        break;
+      }
+      case 'FAIL':
+      case 'CANCEL': {
+        const toStatus = decision === 'FAIL' ? 'FAILED' : 'CANCELLED';
+        await this.apply(orderId, {
+          event: `admin:${decision.toLowerCase()}`,
+          toStatus,
+          actorType: 'ADMIN',
+          actorId,
+          reason,
+          mutate: async (tx) => {
+            const held = await tx.liquidityReservation.findMany({ where: { refType: 'crypto_order', refId: orderId, status: 'HELD' } });
+            for (const h of held) await this.treasury.releaseReservation(tx, h.id, `admin ${decision.toLowerCase()}`);
+            return { failureReason: reason };
+          },
+        });
+        break;
+      }
+    }
+    return this.getOrderDto(orderId, undefined, true);
+  }
+
+  /** Safety-net sweep: re-drives every non-terminal order. Idempotent, cheap. */
+  async sweepActiveOrders(): Promise<{ buy: number; sell: number }> {
+    const [buy, sell] = await Promise.all([
+      this.prisma.cryptoOrder.findMany({
+        where: { side: 'BUY_USDT', status: { in: ['AWAITING_PAYMENT', 'PAYMENT_DETECTED', 'PAYMENT_RECONCILING', 'USDT_SENT'] } },
+        select: { id: true },
+        take: 200,
+      }),
+      this.prisma.cryptoOrder.findMany({
+        where: { side: 'SELL_USDT', status: { in: ['AWAITING_CRYPTO', 'CRYPTO_DETECTED', 'CONFIRMING', 'PAYOUT_PENDING', 'PAYOUT_PROCESSING'] } },
+        select: { id: true },
+        take: 200,
+      }),
+    ]);
+    for (const o of buy) {
+      await this.driveBuy(o.id).catch((e) => this.logger.warn(`sweep buy ${o.id}: ${(e as Error).message}`));
+    }
+    for (const o of sell) {
+      await this.driveSell(o.id).catch((e) => this.logger.warn(`sweep sell ${o.id}: ${(e as Error).message}`));
+    }
+    return { buy: buy.length, sell: sell.length };
   }
 
   // ---- queries ----

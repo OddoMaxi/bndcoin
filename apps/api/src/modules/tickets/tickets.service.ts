@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { CheckinResult, EventOrder } from '@prisma/client';
 import { Money } from '@bn/money';
-import { PrismaService, Tx } from '../../common/prisma/prisma.service';
+import { PrismaService } from '../../common/prisma/prisma.service';
 import { AppConfigService } from '../../common/config/app-config.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { LedgerService } from '../../common/ledger/ledger.service';
@@ -14,7 +14,7 @@ import {
   ValidationError,
 } from '../../common/errors/domain-errors';
 import { eventOrderPublicId, ticketPublicId } from '../../common/util/public-id';
-import { decimalToString, toMoneyString } from '../../common/util/decimal';
+import { decimalToString } from '../../common/util/decimal';
 import { PaymentsService } from '../payments/payments.service';
 import { SettlementsService } from '../settlements/settlements.service';
 import { signQr, verifyQr } from './qr';

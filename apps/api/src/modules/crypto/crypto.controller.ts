@@ -24,7 +24,11 @@ class CreateSellDto {
   @IsString() networkId!: string;
 }
 class AdminTransitionDto {
-  @IsString() toStatus!: string;
+  @IsIn(['FAILED', 'CANCELLED', 'UNDER_REVIEW']) toStatus!: 'FAILED' | 'CANCELLED' | 'UNDER_REVIEW';
+  @IsString() reason!: string;
+}
+class ResolveReviewDto {
+  @IsIn(['RETRY', 'FORCE_COMPLETE', 'FAIL', 'CANCEL']) decision!: 'RETRY' | 'FORCE_COMPLETE' | 'FAIL' | 'CANCEL';
   @IsString() reason!: string;
 }
 
@@ -102,7 +106,14 @@ export class CryptoController {
   @RequirePermission('crypto.operate')
   @Post('admin/crypto/orders/:id/transition')
   transition(@CurrentUser('id') actorId: string, @Param('id') id: string, @Body() dto: AdminTransitionDto) {
-    return this.crypto.adminTransition(actorId, id, dto.toStatus as never, dto.reason);
+    return this.crypto.adminTransition(actorId, id, dto.toStatus, dto.reason);
+  }
+
+  /** Structured resolution of an UNDER_REVIEW order — see CryptoService.resolveReview. */
+  @RequirePermission('crypto.operate')
+  @Post('admin/crypto/orders/:id/resolve')
+  resolve(@CurrentUser('id') actorId: string, @Param('id') id: string, @Body() dto: ResolveReviewDto) {
+    return this.crypto.resolveReview(actorId, id, dto.decision, dto.reason);
   }
 
   @RequirePermission('crypto.read')

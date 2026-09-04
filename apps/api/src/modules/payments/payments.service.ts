@@ -6,7 +6,6 @@ import { AppConfigService } from '../../common/config/app-config.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { AlertsService } from '../../common/alerts/alerts.service';
 import { RedisLockService } from '../../common/redis/redis-lock.service';
-import { NotFoundError } from '../../common/errors/domain-errors';
 import { paymentIntentPublicId } from '../../common/util/public-id';
 import { ORANGE_PROVIDER, OrangeMoneyProvider } from '../orange/orange-provider.interface';
 import { ModemManager } from '../orange/modem-manager.service';

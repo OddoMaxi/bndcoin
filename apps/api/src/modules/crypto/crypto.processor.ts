@@ -30,23 +30,31 @@ export class CryptoProcessor extends WorkerHost {
           break;
         case JOB.SELL_WATCH_DEPOSIT: {
           const o = await this.crypto.driveSell(orderId);
-          if (['AWAITING_CRYPTO', 'CRYPTO_DETECTED', 'CONFIRMING'].includes(o.status) && attempt < MAX_ATTEMPTS) {
-            await this.queue.add(
-              JOB.SELL_WATCH_DEPOSIT,
-              { orderId, attempt: attempt + 1 },
-              { jobId: `sell-watch-${orderId}-${attempt + 1}`, delay: Math.min(15_000, 3_000 * attempt) },
-            );
+          if (['AWAITING_CRYPTO', 'CRYPTO_DETECTED', 'CONFIRMING'].includes(o.status)) {
+            if (attempt < MAX_ATTEMPTS) {
+              await this.queue.add(
+                JOB.SELL_WATCH_DEPOSIT,
+                { orderId, attempt: attempt + 1 },
+                { jobId: `sell-watch-${orderId}-${attempt + 1}`, delay: Math.min(15_000, 3_000 * attempt) },
+              );
+            } else {
+              await this.crypto.flagForReview(orderId, `No USDT deposit detected after ${MAX_ATTEMPTS} checks`);
+            }
           }
           break;
         }
         case JOB.WITHDRAWAL_CONFIRM: {
           const o = await this.crypto.driveBuy(orderId);
-          if (o.status === 'USDT_SENT' && attempt < MAX_ATTEMPTS) {
-            await this.queue.add(
-              JOB.WITHDRAWAL_CONFIRM,
-              { orderId, attempt: attempt + 1 },
-              { jobId: `wd-${orderId}-${attempt + 1}`, delay: Math.min(30_000, 3_000 * attempt) },
-            );
+          if (o.status === 'USDT_SENT') {
+            if (attempt < MAX_ATTEMPTS) {
+              await this.queue.add(
+                JOB.WITHDRAWAL_CONFIRM,
+                { orderId, attempt: attempt + 1 },
+                { jobId: `wd-${orderId}-${attempt + 1}`, delay: Math.min(30_000, 3_000 * attempt) },
+              );
+            } else {
+              await this.crypto.flagForReview(orderId, `USDT not confirmed on-chain after ${MAX_ATTEMPTS} checks`);
+            }
           }
           break;
         }

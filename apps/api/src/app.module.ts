@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { TestAwareThrottlerGuard } from './common/rate-limit/test-aware-throttler.guard';
 import { AppConfigModule } from './common/config/config.module';
 import { AppConfigService } from './common/config/app-config.service';
 import { PrismaModule } from './common/prisma/prisma.module';
@@ -71,7 +72,7 @@ import { SystemModule } from './modules/system/system.module';
   ],
   providers: [
     BootstrapService,
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: TestAwareThrottlerGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })

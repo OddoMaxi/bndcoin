@@ -23,7 +23,7 @@ function makeSvc(lots: any[]) {
 
 describe('InventoryService (weighted average cost + FIFO COGS)', () => {
   it('computes the weighted average acquisition cost across lots', async () => {
-    const { svc, client } = makeSvc([
+    const { svc } = makeSvc([
       { quantityRemaining: '5000', unitCostGnf: '8800' },
       { quantityRemaining: '10000', unitCostGnf: '8900' },
       { quantityRemaining: '5000', unitCostGnf: '8750' },
@@ -50,7 +50,7 @@ describe('InventoryService (weighted average cost + FIFO COGS)', () => {
   });
 
   it('returns 0 WAC when there is no inventory', async () => {
-    const { svc, client } = makeSvc([]);
+    const { svc } = makeSvc([]);
     expect(await svc.weightedAverageCost()).toBe('0');
   });
 });

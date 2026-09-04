@@ -6,7 +6,7 @@ import { AuditService } from '../../common/audit/audit.service';
 import { LedgerService } from '../../common/ledger/ledger.service';
 import { ValidationError, NotFoundError } from '../../common/errors/domain-errors';
 import { settlementPublicId } from '../../common/util/public-id';
-import { decimalToString, toMoneyString } from '../../common/util/decimal';
+import { decimalToString } from '../../common/util/decimal';
 import { PayoutsService } from '../payments/payouts.service';
 
 interface AccrueInput {

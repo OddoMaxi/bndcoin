@@ -38,40 +38,66 @@ export default function AdminCrypto() {
         { key: 'usdtAmount', label: 'USDT', render: (r) => fmtUSDT(r.usdtAmount) },
         { key: 'finalRate', label: 'Taux', render: (r) => fmtRate(r.finalRate) },
       ]}
-      actions={(r, reload) =>
-        ['UNDER_REVIEW', 'AWAITING_PAYMENT', 'PAYMENT_VERIFIED', 'USDT_SENT'].includes(r.status) ? (
+      actions={(r, reload) => {
+        const TERMINAL = ['COMPLETED', 'FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED'];
+        // UNDER_REVIEW isn't a legal transition target from these very early,
+        // short-lived states (order creation resolves them synchronously) —
+        // CANCELLED is the only admin override available there.
+        const PRE_REVIEW = ['CREATED', 'QUOTE_LOCKED', 'USDT_RESERVED'];
+
+        const resolve = async (decision: 'RETRY' | 'FORCE_COMPLETE' | 'FAIL' | 'CANCEL') => {
+          const reason = window.prompt(`Motif (${decision}) :`, 'admin override');
+          if (reason === null) return;
+          const e = await adminAction(`/admin/crypto/orders/${r.id}/resolve`, { decision, reason });
+          if (e) alert(e);
+          reload();
+        };
+        const transition = async (toStatus: 'UNDER_REVIEW' | 'CANCELLED') => {
+          const reason = window.prompt(`Motif (${toStatus}) :`, 'admin override');
+          if (reason === null) return;
+          const e = await adminAction(`/admin/crypto/orders/${r.id}/transition`, { toStatus, reason });
+          if (e) alert(e);
+          reload();
+        };
+
+        if (r.status === 'UNDER_REVIEW') {
+          return (
+            <div className="flex flex-wrap justify-end gap-1">
+              <button className="rounded bg-forest px-2 py-1 text-xs text-white" onClick={() => resolve('RETRY')}>
+                Reprendre
+              </button>
+              <button className="rounded bg-emerald-700 px-2 py-1 text-xs text-white" onClick={() => resolve('FORCE_COMPLETE')}>
+                Forcer terminé
+              </button>
+              <button className="rounded bg-red-600 px-2 py-1 text-xs text-white" onClick={() => resolve('FAIL')}>
+                Échec
+              </button>
+              <button className="rounded bg-slate-600 px-2 py-1 text-xs text-white" onClick={() => resolve('CANCEL')}>
+                Annuler
+              </button>
+            </div>
+          );
+        }
+        if (TERMINAL.includes(r.status)) {
+          return <span className="text-xs text-muted">{human(r.status)}</span>;
+        }
+        if (PRE_REVIEW.includes(r.status)) {
+          return (
+            <div className="flex justify-end gap-1">
+              <button className="rounded bg-slate-600 px-2 py-1 text-xs text-white" onClick={() => transition('CANCELLED')}>
+                Annuler
+              </button>
+            </div>
+          );
+        }
+        return (
           <div className="flex justify-end gap-1">
-            <button
-              className="rounded bg-forest px-2 py-1 text-xs text-white"
-              onClick={async () => {
-                const e = await adminAction(`/admin/crypto/orders/${r.id}/transition`, {
-                  toStatus: 'COMPLETED',
-                  reason: 'admin override',
-                });
-                if (e) alert(e);
-                reload();
-              }}
-            >
-              Terminer
-            </button>
-            <button
-              className="rounded bg-red-600 px-2 py-1 text-xs text-white"
-              onClick={async () => {
-                const e = await adminAction(`/admin/crypto/orders/${r.id}/transition`, {
-                  toStatus: 'FAILED',
-                  reason: 'admin override',
-                });
-                if (e) alert(e);
-                reload();
-              }}
-            >
-              Échec
+            <button className="rounded bg-amber-600 px-2 py-1 text-xs text-white" onClick={() => transition('UNDER_REVIEW')}>
+              Mettre en revue
             </button>
           </div>
-        ) : (
-          <span className="text-xs text-muted">{human(r.status)}</span>
-        )
-      }
+        );
+      }}
     />
   );
 }

@@ -5,7 +5,6 @@ import { PrismaService, Tx } from '../../common/prisma/prisma.service';
 import { AppConfigService } from '../../common/config/app-config.service';
 import { AuditService } from '../../common/audit/audit.service';
 import {
-  DomainError,
   ForbiddenError,
   NotFoundError,
   QuoteExpiredError,

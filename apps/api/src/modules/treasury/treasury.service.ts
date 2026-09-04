@@ -7,7 +7,6 @@ import { LedgerService } from '../../common/ledger/ledger.service';
 import { AlertsService } from '../../common/alerts/alerts.service';
 import {
   ConflictError,
-  DomainError,
   InsufficientLiquidityError,
   NotFoundError,
 } from '../../common/errors/domain-errors';

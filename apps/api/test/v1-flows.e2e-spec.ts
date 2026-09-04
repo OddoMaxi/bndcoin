@@ -182,6 +182,129 @@ describe('Crypto BUY & SELL — full simulated flows', () => {
     expect(final.body.status).toBe('UNDER_REVIEW');
   });
 
+  it('SELL deposit mismatch UNDER_REVIEW rejects RETRY (deposit never confirmed at quoted amount)', async () => {
+    const quote = await req(ctx.server)
+      .post('/api/v1/quotes')
+      .set(U())
+      .set('Idempotency-Key', 'q-sell-m2')
+      .send({ side: 'SELL_USDT', usdtAmount: '100' })
+      .expect(201);
+    const order = await req(ctx.server)
+      .post('/api/v1/crypto/orders/sell')
+      .set(U())
+      .set('Idempotency-Key', 'o-sell-m2')
+      .send({ quoteId: quote.body.id, networkId })
+      .expect(201);
+    await req(ctx.server)
+      .post(`/api/v1/mock/crypto/deposit/${order.body.id}/event`)
+      .set(A())
+      .send({ scenario: 'AMOUNT_MISMATCH' })
+      .expect(201);
+
+    // RETRY must refuse: no `crypto-confirmed` event exists for this order, so
+    // resuming would reserve a GNF payout against a deposit that was the wrong amount.
+    await req(ctx.server)
+      .post(`/api/v1/admin/crypto/orders/${order.body.id}/resolve`)
+      .set(A())
+      .send({ decision: 'RETRY', reason: 'test' })
+      .expect(422);
+
+    // FORCE_COMPLETE must also refuse: no PAID payout exists.
+    await req(ctx.server)
+      .post(`/api/v1/admin/crypto/orders/${order.body.id}/resolve`)
+      .set(A())
+      .send({ decision: 'FORCE_COMPLETE', reason: 'test' })
+      .expect(422);
+
+    // CANCEL is legal and releases any held reservation.
+    const cancelled = await req(ctx.server)
+      .post(`/api/v1/admin/crypto/orders/${order.body.id}/resolve`)
+      .set(A())
+      .send({ decision: 'CANCEL', reason: 'wrong amount deposited' })
+      .expect(201);
+    expect(cancelled.body.status).toBe('CANCELLED');
+  });
+
+  it('SELL: liquidity shortfall at GNF reservation flags UNDER_REVIEW, then RETRY completes once liquidity is restored', async () => {
+    const quote = await req(ctx.server)
+      .post('/api/v1/quotes')
+      .set(U())
+      .set('Idempotency-Key', 'q-sell-liq')
+      .send({ side: 'SELL_USDT', usdtAmount: '100' })
+      .expect(201);
+    const order = await req(ctx.server)
+      .post('/api/v1/crypto/orders/sell')
+      .set(U())
+      .set('Idempotency-Key', 'o-sell-liq')
+      .send({ quoteId: quote.body.id, networkId })
+      .expect(201);
+
+    // Starve GNF liquidity so the CRYPTO_CONFIRMED -> GNF_RESERVED step fails.
+    await ctx.prisma.treasuryAccount.update({
+      where: { asset_bucket: { asset: 'GNF', bucket: 'PDV_01' } },
+      data: { available: '0' },
+    });
+
+    await req(ctx.server)
+      .post(`/api/v1/mock/crypto/deposit/${order.body.id}/event`)
+      .set(A())
+      .send({ scenario: 'CONFIRMED' })
+      .expect(201);
+
+    const stuck = await req(ctx.server).get(`/api/v1/crypto/orders/${order.body.id}`).set(U()).expect(200);
+    expect(stuck.body.status).toBe('UNDER_REVIEW');
+
+    // Restore liquidity and retry.
+    await ctx.prisma.treasuryAccount.update({
+      where: { asset_bucket: { asset: 'GNF', bucket: 'PDV_01' } },
+      data: { available: '1000000000' },
+    });
+    const retried = await req(ctx.server)
+      .post(`/api/v1/admin/crypto/orders/${order.body.id}/resolve`)
+      .set(A())
+      .send({ decision: 'RETRY', reason: 'liquidity restored' })
+      .expect(201);
+    expect(retried.body.status).toBe('COMPLETED');
+    expect(await ledgerOk()).toBe(true);
+
+    // Only one GNF reservation was ever created for this order (idempotent resume).
+    const reservations = await ctx.prisma.liquidityReservation.count({
+      where: { refType: 'crypto_order', refId: order.body.id, asset: 'GNF' },
+    });
+    expect(reservations).toBe(1);
+  });
+
+  it('admin transition endpoint refuses COMPLETED (must go through /resolve)', async () => {
+    const quote = await req(ctx.server)
+      .post('/api/v1/quotes')
+      .set(U())
+      .set('Idempotency-Key', 'q-buy-nocomplete')
+      .send({ side: 'BUY_USDT', gnfAmount: '1000000' })
+      .expect(201);
+    const order = await req(ctx.server)
+      .post('/api/v1/crypto/orders/buy')
+      .set(U())
+      .set('Idempotency-Key', 'o-buy-nocomplete')
+      .send({ quoteId: quote.body.id, networkId, destinationAddress: TRON })
+      .expect(201);
+
+    await req(ctx.server)
+      .post(`/api/v1/admin/crypto/orders/${order.body.id}/transition`)
+      .set(A())
+      .send({ toStatus: 'COMPLETED', reason: 'nope' })
+      .expect(400);
+
+    // CANCELLED is a legal free-form target and releases the USDT reservation.
+    const cancelled = await req(ctx.server)
+      .post(`/api/v1/admin/crypto/orders/${order.body.id}/transition`)
+      .set(A())
+      .send({ toStatus: 'CANCELLED', reason: 'user request' })
+      .expect(201);
+    expect(cancelled.body.status).toBe('CANCELLED');
+    const t = await req(ctx.server).get('/api/v1/admin/treasury').set(A()).expect(200);
+    expect(Number(t.body.balances.USDT.reserved)).toBe(0);
+  });
+
   it('rejects a BUY when USDT liquidity is insufficient (409)', async () => {
     await ctx.prisma.treasuryAccount.update({
       where: { asset_bucket: { asset: 'USDT', bucket: 'HOT' } },

@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { Asset } from '@prisma/client';
 import { Money } from '@bn/money';
 import { PrismaService, Tx } from '../../common/prisma/prisma.service';
 

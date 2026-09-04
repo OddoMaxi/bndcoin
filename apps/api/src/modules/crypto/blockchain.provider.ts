@@ -1,5 +1,5 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { createHash, randomBytes } from 'node:crypto';
+import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { AppConfigService } from '../../common/config/app-config.service';
 import { MockScenarioService } from '../../common/mock/mock-scenario.service';
 

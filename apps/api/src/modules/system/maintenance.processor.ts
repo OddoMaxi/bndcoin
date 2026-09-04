@@ -38,6 +38,7 @@ export class MaintenanceProcessor extends WorkerHost implements OnModuleInit {
       this.queue.add(name, {}, { repeat: { every: ms }, removeOnComplete: true, removeOnFail: 50 });
     await add(JOB.QUOTE_SWEEP, every);
     await add(JOB.ORDER_SWEEP, Math.max(every, 60_000));
+    await add(JOB.CRYPTO_WATCH_SWEEP, 45_000);
     await add(JOB.TREASURY_RECONCILE, 300_000);
     await add(JOB.ALERT_SCAN, 120_000);
     await add(JOB.MODEM_HEALTHCHECK, 60_000);
@@ -52,6 +53,11 @@ export class MaintenanceProcessor extends WorkerHost implements OnModuleInit {
           break;
         case JOB.ORDER_SWEEP:
           await this.crypto.expireStaleOrders();
+          break;
+        case JOB.CRYPTO_WATCH_SWEEP:
+          // Safety net: re-drives every active crypto order in case a per-order
+          // delayed job died (worker restart, dropped Redis key, etc).
+          await this.crypto.sweepActiveOrders();
           break;
         case JOB.TREASURY_RECONCILE:
           await this.treasury.reconcile();

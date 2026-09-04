@@ -1,7 +1,7 @@
 import { Body, Controller, NotFoundException, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { CanActivate, Injectable } from '@nestjs/common';
-import { IsIn, IsString } from 'class-validator';
+import { IsIn } from 'class-validator';
 import { AppConfigService } from '../../common/config/app-config.service';
 import { RequirePermission } from '../../common/rbac/decorators';
 import { MockScenarioService } from '../../common/mock/mock-scenario.service';

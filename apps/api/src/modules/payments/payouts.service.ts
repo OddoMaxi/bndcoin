@@ -21,6 +21,8 @@ interface CreatePayoutInput {
  * GNF payout engine (SELL settlements, organiser settlements). Idempotent by
  * `idempotencyKey`; never runs the same money movement twice on retry.
  */
+const MAX_PAYOUT_ATTEMPTS = 5;
+
 @Injectable()
 export class PayoutsService {
   private readonly logger = new Logger(PayoutsService.name);
@@ -65,7 +67,16 @@ export class PayoutsService {
   async process(payoutId: string): Promise<PayoutStatus> {
     return this.lock.withLock(`payout:${payoutId}`, async () => {
       const payout = await this.entity(payoutId);
-      if (!['PENDING', 'RESERVED'].includes(payout.status)) return payout.status;
+      if (!['PENDING', 'RESERVED', 'FAILED'].includes(payout.status)) return payout.status;
+      if (payout.status === 'FAILED') {
+        if (payout.attempts >= MAX_PAYOUT_ATTEMPTS) {
+          throw new Error(`Payout ${payout.publicId} exhausted ${MAX_PAYOUT_ATTEMPTS} attempts; escalate manually instead of retrying`);
+        }
+        await this.prisma.runInTransaction(async (tx) => {
+          await tx.payout.update({ where: { id: payoutId }, data: { status: 'PENDING', failureReason: null } });
+          await this.event(tx, payoutId, 'retry', 'ADMIN');
+        });
+      }
 
       const modemId = await this.prisma.runInTransaction((tx) =>
         this.modems.allocate(tx, payout.amount.toFixed(), 'PAYOUT'),
